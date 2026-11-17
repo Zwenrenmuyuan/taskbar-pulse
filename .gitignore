@@ -1,0 +1,30 @@
+# Build output and local experiments/backups
+/build/
+/tmp/
+
+# Per-user runtime settings
+TaskbarMonitor.ini
+
+# Compiler output and diagnostic logs
+*.exe
+*.obj
+*.o
+*.res
+*.pdb
+*.ilk
+*.log
+
+# Local IDE state
+.vs/
+*.user
+*.suo
+
+# Local environment configuration
+.env
+.env.*
+!.env.example
+
+# OS metadata
+Thumbs.db
+Desktop.ini
+.DS_Store

@@ -1,0 +1,11 @@
+AMDFamily17.bin is an unmodified signed module from PawnIO.Modules.
+Copyright (C) 2025 namazso <admin@namazso.eu>
+License: LGPL-2.1-or-later. See COPYING.
+Upstream source: https://github.com/namazso/PawnIO.Modules
+Binary source (same version used by LiteMonitor 1.3.7):
+https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/blob/v0.9.6/LibreHardwareMonitorLib/Resources/PawnIo/AMDFamily17.bin
+
+The module is embedded by res/app.rc. To replace it, replace AMDFamily17.bin
+and rebuild with build.ps1. TaskbarMonitor only calls ioctl_read_smn to read
+THM_TCON_CUR_TMP, while holding the shared Global\Access_PCI mutex.
+The separately installed PawnIO driver verifies and runs the module.
