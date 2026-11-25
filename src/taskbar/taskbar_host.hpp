@@ -8,11 +8,27 @@
 #endif
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <map>
+#include <string>
+#include <vector>
+#include "core/config.hpp"
 #include "taskbar/taskbar_layout.hpp"
+
+struct TaskbarInfo {
+    HWND hwndTaskbar = nullptr;
+    HWND hwndTrayNotify = nullptr;
+    HMONITOR hMonitor = nullptr;
+    bool isPrimary = false;
+    std::wstring deviceName;
+    std::wstring friendlyName;
+    RECT rcMonitor{};
+    UINT dpi = 96;
+};
 
 struct TaskbarPlacement {
     bool valid = false;
     bool shouldShow = false;
+    bool occludedByFullscreen = false;
     bool taskbarAtTop = false;
     UINT dpi = 96;
     int appliedOffsetXDip = 0;
@@ -35,14 +51,33 @@ public:
 
     void AttachHook(ChangeCallback cb, void* userData);
     void DetachHook();
-    void RefreshHandles();
+    void RefreshHandles(bool refreshNames = false);
 
-    TaskbarPlacement ComputePlacement(float widgetWidthDip, float widgetMaxHeightDip, int offsetXDip, bool hideInFullscreen, HWND ownWidget, HWND ownFlyout);
+    const std::vector<TaskbarInfo>& Taskbars() const { return m_taskbars; }
+    std::vector<TaskbarInfo> ResolveTargetTaskbars(const AppConfig& cfg) const;
+
+    TaskbarPlacement ComputePlacementForTaskbar(
+        const TaskbarInfo& tb,
+        float widgetWidthDip,
+        float widgetMaxHeightDip,
+        int offsetXDip,
+        const std::vector<HWND>& ownWindows);
+
+    TaskbarPlacement ComputePlacement(
+        float widgetWidthDip,
+        float widgetMaxHeightDip,
+        int offsetXDip,
+        HWND ownWidget,
+        HWND ownFlyout);
+
+    void EnsureAboveTaskbar(HWND taskbarHwnd, HWND ownWidget, HWND ownFlyout);
     void EnsureAboveTaskbar(HWND ownWidget, HWND ownFlyout);
 
     HWND TaskbarHwnd() const { return m_hTaskbar; }
 
 private:
+    bool IsTrackedTaskbarHwnd(HWND hwnd) const;
+
     static void CALLBACK WinEventProc(
         HWINEVENTHOOK hWinEventHook,
         DWORD event,
@@ -54,6 +89,9 @@ private:
 
     HWND m_hTaskbar = nullptr;
     HWND m_hTrayNotify = nullptr;
+    std::vector<TaskbarInfo> m_taskbars;
+    std::map<std::wstring, std::wstring> m_friendlyNames;
+    std::vector<std::wstring> m_cachedMonitorDevices;
     DWORD m_explorerPid = 0;
     HWINEVENTHOOK m_hook = nullptr;
     HWINEVENTHOOK m_fgHook = nullptr;

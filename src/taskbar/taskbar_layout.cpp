@@ -1,4 +1,5 @@
 #include "taskbar/taskbar_layout.hpp"
+#include <algorithm>
 #include <uiautomation.h>
 #include <wrl/client.h>
 #include <utility>
@@ -98,6 +99,27 @@ bool TaskbarLayoutReader::SameDisplay(const Layout& a, const Layout& b) {
     return a.taskbar == b.taskbar && a.dpi == b.dpi && EqualRect(&a.bounds, &b.bounds);
 }
 
+bool TaskbarLayoutReader::HasPendingLocked() const {
+    for (const auto& entry : m_entries) {
+        if (entry.pending) return true;
+    }
+    return false;
+}
+
+void TaskbarLayoutReader::Prune(const std::vector<HWND>& activeTaskbars) {
+    std::lock_guard lock(m_mutex);
+    m_entries.erase(
+        std::remove_if(m_entries.begin(), m_entries.end(), [&](const Entry& e) {
+            return std::find(activeTaskbars.begin(), activeTaskbars.end(), e.request.taskbar) == activeTaskbars.end();
+        }),
+        m_entries.end());
+    if (m_entries.empty()) {
+        m_nextCursor = 0;
+    } else if (m_nextCursor >= m_entries.size()) {
+        m_nextCursor = 0;
+    }
+}
+
 bool TaskbarLayoutReader::Read(HWND taskbar, const RECT& bounds, UINT dpi,
                               std::vector<RECT>& occupied) {
     Layout requested;
@@ -106,16 +128,25 @@ bool TaskbarLayoutReader::Read(HWND taskbar, const RECT& bounds, UINT dpi,
     requested.dpi = dpi;
     ULONGLONG now = GetTickCount64();
     std::lock_guard lock(m_mutex);
-    bool displayChanged = !SameDisplay(requested, m_request);
-    if (displayChanged) m_result.valid = false;
-    if (displayChanged || now - m_lastRequest >= 1000) {
-        m_request = requested;
-        m_lastRequest = now;
-        m_pending = true;
+    auto it = std::find_if(m_entries.begin(), m_entries.end(), [&](const Entry& e) {
+        return e.request.taskbar == taskbar;
+    });
+    if (it == m_entries.end()) {
+        Entry fresh;
+        fresh.request.taskbar = taskbar;
+        m_entries.push_back(std::move(fresh));
+        it = std::prev(m_entries.end());
+    }
+    bool displayChanged = !SameDisplay(requested, it->request);
+    if (displayChanged) it->result.valid = false;
+    if (displayChanged || now - it->lastRequest >= 1000) {
+        it->request = requested;
+        it->lastRequest = now;
+        it->pending = true;
         m_wake.notify_one();
     }
-    if (!m_result.valid || !SameDisplay(requested, m_result)) return false;
-    occupied = m_result.occupied;
+    if (!it->result.valid || !SameDisplay(requested, it->result)) return false;
+    occupied = it->result.occupied;
     return true;
 }
 
@@ -129,10 +160,19 @@ void TaskbarLayoutReader::Run() {
             Layout result;
             {
                 std::unique_lock lock(m_mutex);
-                m_wake.wait(lock, [&] { return m_stop || m_pending; });
+                m_wake.wait(lock, [&] { return m_stop || HasPendingLocked(); });
                 if (m_stop) break;
-                result = m_request;
-                m_pending = false;
+                const size_t n = m_entries.size();
+                for (size_t offset = 0; offset < n; ++offset) {
+                    size_t idx = (m_nextCursor + offset) % n;
+                    if (m_entries[idx].pending) {
+                        result = m_entries[idx].request;
+                        m_entries[idx].pending = false;
+                        m_nextCursor = (idx + 1) % n;
+                        break;
+                    }
+                }
+                if (!result.taskbar) continue;
             }
             if (SUCCEEDED(com) && !automation) {
                 if (!CreateReader(automation, controls, cache)) {
@@ -148,7 +188,12 @@ void TaskbarLayoutReader::Run() {
             // tray popup is open. Keep the last successful layout for this
             // taskbar; only a successful read may replace it. Read() already
             // invalidates it when the taskbar handle, bounds or DPI changes.
-            if (SameDisplay(result, m_request) && result.valid) m_result = std::move(result);
+            auto it = std::find_if(m_entries.begin(), m_entries.end(), [&](const Entry& e) {
+                return e.request.taskbar == result.taskbar;
+            });
+            if (it != m_entries.end() && SameDisplay(result, it->request) && result.valid) {
+                it->result = std::move(result);
+            }
         }
     }
     if (SUCCEEDED(com)) CoUninitialize();

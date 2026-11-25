@@ -20,6 +20,7 @@ public:
     TaskbarLayoutReader& operator=(const TaskbarLayoutReader&) = delete;
 
     bool Read(HWND taskbar, const RECT& bounds, UINT dpi, std::vector<RECT>& occupied);
+    void Prune(const std::vector<HWND>& activeTaskbars);
 
 private:
     struct Layout {
@@ -29,15 +30,20 @@ private:
         bool valid = false;
         std::vector<RECT> occupied;
     };
+    struct Entry {
+        Layout request;
+        Layout result;
+        bool pending = false;
+        ULONGLONG lastRequest = 0;
+    };
     static bool SameDisplay(const Layout& a, const Layout& b);
+    bool HasPendingLocked() const;
     void Run();
 
     std::mutex m_mutex;
     std::condition_variable m_wake;
     bool m_stop = false;
-    bool m_pending = false;
-    ULONGLONG m_lastRequest = 0;
-    Layout m_request;
-    Layout m_result;
+    size_t m_nextCursor = 0;
+    std::vector<Entry> m_entries;
     std::thread m_thread;
 };

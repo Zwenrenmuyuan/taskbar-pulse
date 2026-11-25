@@ -37,9 +37,17 @@ LRESULT CALLBACK HostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         case WM_TIMER:
             if (wParam == kTimerPollId) {
                 app->snap = app->sensors.Poll();
-                RenderWidget(app);
+                bool anyActive = false;
+                for (auto& w : app->widgets) {
+                    if (!w.fullscreenPaused) {
+                        RenderWidget(app, w);
+                        anyActive = true;
+                    }
+                }
+                if (anyActive || app->widgets.empty()) {
+                    UpdateTrayIcon(app, false);
+                }
                 if (app->flyoutVisible) RenderAndPositionFlyout(app);
-                UpdateTrayIcon(app, false);
             } else if (wParam == kTimerGuardId) {
                 SyncWidgetPlacement(app, false);
             } else if (wParam == kTimerGoldId) {
@@ -55,6 +63,7 @@ LRESULT CALLBACK HostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         case WM_SETTINGCHANGE:
         case WM_DISPLAYCHANGE:
         case WM_DPICHANGED:
+            if (msg == WM_DISPLAYCHANGE) app->host.RefreshHandles(true);
             SyncWidgetPlacement(app, true);
             if (app->flyoutVisible) RenderAndPositionFlyout(app);
             return 0;
@@ -78,7 +87,6 @@ LRESULT CALLBACK HostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             KillTimer(hwnd, kTimerGoldId);
             app->host.DetachHook();
             RemoveTrayIcon(app);
-            app->renderer.ResetWidgetTarget();
             if (app->hwndSubmenu) {
                 DestroyWindow(app->hwndSubmenu);
                 app->hwndSubmenu = nullptr;
@@ -87,10 +95,7 @@ LRESULT CALLBACK HostWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 DestroyWindow(app->hwndMenu);
                 app->hwndMenu = nullptr;
             }
-            if (app->hwndWidget) {
-                DestroyWindow(app->hwndWidget);
-                app->hwndWidget = nullptr;
-            }
+            DestroyAllWidgets(app);
             if (app->hwndFlyout) {
                 DestroyWindow(app->hwndFlyout);
                 app->hwndFlyout = nullptr;
@@ -175,10 +180,6 @@ void ExecuteMenuCommand(AppState* app, UINT cmd) {
             ApplyGoldTimer(app);
             changed = true;
             break;
-        case IDM_TOGGLE_FULLSCREEN:
-            app->cfg.hideInFullscreen = !app->cfg.hideInFullscreen;
-            changed = true;
-            break;
         case IDM_RATE_500:
             app->cfg.refreshMs = 500;
             ApplyRefreshTimer(app);
@@ -195,7 +196,17 @@ void ExecuteMenuCommand(AppState* app, UINT cmd) {
             changed = true;
             break;
         case IDM_RESET_OFFSET:
-            app->cfg.offsetXDip = 0;
+            ResetAllMonitorOffsets(app->cfg);
+            changed = true;
+            break;
+        case IDM_DISPLAY_ALL:
+            app->cfg.displayMode = DisplayTargetMode::All;
+            app->cfg.displayDevice.clear();
+            changed = true;
+            break;
+        case IDM_DISPLAY_PRIMARY:
+            app->cfg.displayMode = DisplayTargetMode::Primary;
+            app->cfg.displayDevice.clear();
             changed = true;
             break;
         case IDM_TOGGLE_AUTOSTART:
@@ -204,6 +215,16 @@ void ExecuteMenuCommand(AppState* app, UINT cmd) {
         case IDM_EXIT:
             DestroyWindow(app->hwndHost);
             return;
+        default:
+            if (cmd >= IDM_DISPLAY_SPEC_BASE && cmd <= IDM_DISPLAY_SPEC_MAX) {
+                size_t idx = static_cast<size_t>(cmd - IDM_DISPLAY_SPEC_BASE);
+                if (idx < app->menuDisplayDevices.size()) {
+                    app->cfg.displayMode = DisplayTargetMode::Specific;
+                    app->cfg.displayDevice = app->menuDisplayDevices[idx];
+                    changed = true;
+                }
+            }
+            break;
     }
 
     if (changed) {
@@ -293,7 +314,6 @@ int RunApplication(HINSTANCE hInstance) {
             0, 0, 10, 10, nullptr, nullptr, hInstance, &app);
 
         app.host.AttachHook(&OnTaskbarChangedCallback, &app);
-        EnsureWidgetWindow(&app);
         UpdateTrayIcon(&app, true);
         SyncWidgetPlacement(&app, true);
 

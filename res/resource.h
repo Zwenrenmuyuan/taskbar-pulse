@@ -14,7 +14,6 @@
 #define IDM_ROW2_HIDE         2032
 #define IDM_ROW2_CPU_TEMP     2033
 #define IDM_TOGGLE_GPUTEMP    2040
-#define IDM_TOGGLE_FULLSCREEN 2041
 #define IDM_TOGGLE_GOLD       2042
 #define IDM_RATE_500          2050
 #define IDM_RATE_1000         2051
@@ -22,4 +21,8 @@
 #define IDM_RESET_OFFSET      2060
 #define IDM_OPEN_FLYOUT       2061
 #define IDM_TOGGLE_AUTOSTART  2070
+#define IDM_DISPLAY_ALL       2080
+#define IDM_DISPLAY_PRIMARY   2081
+#define IDM_DISPLAY_SPEC_BASE 2100
+#define IDM_DISPLAY_SPEC_MAX  2131
 #define IDM_EXIT              2099

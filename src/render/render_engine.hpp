@@ -96,7 +96,8 @@ public:
         bool isSubmenuSurface,
         std::vector<RECT>& outItemRectsPx);
 
-    void ResetWidgetTarget();
+    void ResetWidgetTarget(HWND hwnd = nullptr);
+    float MeasureMenuLabelWidth(const wchar_t* text) const;
 
     IWICBitmap* WidgetBitmap() const { return m_widgetTarget.bitmap; }
     IWICBitmap* FlyoutBitmap() const { return m_flyoutTarget.bitmap; }
@@ -111,11 +112,21 @@ private:
         int height = 0;
     };
 
+    struct DCompTargetEntry {
+        HWND hwnd = nullptr;
+        IDCompositionTarget* target = nullptr;
+        IDCompositionVisual* visual = nullptr;
+        IDCompositionSurface* surface = nullptr;
+        int width = 0;
+        int height = 0;
+    };
+
     bool EnsureWicTarget(WicTarget& target, int widthPx, int heightPx, UINT dpi);
     void ReleaseWicTarget(WicTarget& target);
     bool EnsureDCompDevice();
     void ResetDCompDevice();
-    bool EnsureDCompSurface(HWND hwnd, int widthPx, int heightPx);
+    void ReleaseDCompTargetEntry(DCompTargetEntry& entry);
+    DCompTargetEntry* EnsureDCompSurface(HWND hwnd, int widthPx, int heightPx);
     bool RenderWidgetViaDComp(
         HWND hwnd,
         int widthPx,
@@ -170,12 +181,7 @@ private:
     ID2D1Device* m_d2dDevice = nullptr;
     ID2D1DeviceContext* m_d2dDc = nullptr;
     IDCompositionDevice* m_dcompDevice = nullptr;
-    HWND m_dcompHwnd = nullptr;
-    IDCompositionTarget* m_dcompTarget = nullptr;
-    IDCompositionVisual* m_dcompVisual = nullptr;
-    IDCompositionSurface* m_dcompSurface = nullptr;
-    int m_dcompW = 0;
-    int m_dcompH = 0;
+    std::vector<DCompTargetEntry> m_dcompTargets;
 
     WicTarget m_widgetTarget{};
     WicTarget m_flyoutTarget{};

@@ -1,103 +1,211 @@
 #include "app/widget_window.hpp"
 #include "app/flyout_window.hpp"
 #include "app/menu_window.hpp"
+#include "app/tray_icon.hpp"
+#include <algorithm>
 #include <cmath>
 
-void EnsureWidgetWindow(AppState* app) {
-    if (!app) return;
-    app->host.RefreshHandles();
-    HWND hTaskbar = app->host.TaskbarHwnd();
-    if (!hTaskbar || !IsWindow(hTaskbar)) {
-        return;
+WidgetInstance* FindWidget(AppState* app, HWND hwnd) {
+    if (!app || !hwnd) return nullptr;
+    for (auto& w : app->widgets) {
+        if (w.hwnd == hwnd) return &w;
     }
-
-    if (app->hwndWidget && (!IsWindow(app->hwndWidget) || GetParent(app->hwndWidget) != hTaskbar)) {
-        app->renderer.ResetWidgetTarget();
-        DestroyWindow(app->hwndWidget);
-        app->hwndWidget = nullptr;
-        app->widgetVisible = false;
-        app->widgetHovered = false;
-        app->widgetTracking = false;
-        app->widgetPressed = false;
-        app->draggingOffset = false;
-        app->lastPlacement = {};
-    }
-
-    if (!app->hwndWidget) {
-        app->hwndWidget = CreateWindowExW(
-            WS_EX_NOREDIRECTIONBITMAP | WS_EX_NOACTIVATE,
-            kWidgetClass, L"TaskbarMonitorWidget",
-            WS_CHILD | WS_CLIPSIBLINGS,
-            0, 0, 10, 10, hTaskbar, nullptr, app->hInst, app);
-        app->widgetVisible = false;
-        app->widgetHovered = false;
-        app->widgetTracking = false;
-        app->widgetPressed = false;
-        app->draggingOffset = false;
-        app->lastPlacement = {};
-    }
+    return nullptr;
 }
 
-void RenderWidget(AppState* app) {
-    if (!app->hwndWidget || !app->widgetVisible || !app->lastPlacement.shouldShow) return;
+const WidgetInstance* FindPreferredWidget(const AppState* app, HWND preferredHwnd) {
+    if (!app || app->widgets.empty()) return nullptr;
+    if (preferredHwnd) {
+        for (const auto& w : app->widgets) {
+            if (w.hwnd == preferredHwnd && w.lastPlacement.valid) return &w;
+        }
+    }
+    for (const auto& w : app->widgets) {
+        if (w.isPrimary && w.visible && w.lastPlacement.valid) return &w;
+    }
+    for (const auto& w : app->widgets) {
+        if (w.visible && w.lastPlacement.valid) return &w;
+    }
+    for (const auto& w : app->widgets) {
+        if (w.lastPlacement.valid) return &w;
+    }
+    return nullptr;
+}
+
+void RenderWidget(AppState* app, WidgetInstance& w) {
+    if (!w.hwnd || !w.visible || !w.lastPlacement.shouldShow) return;
     app->renderer.RenderWidgetToWindow(
-        app->hwndWidget,
-        app->lastPlacement.ptWidget,
-        app->lastPlacement.dpi,
+        w.hwnd,
+        w.lastPlacement.ptWidget,
+        w.lastPlacement.dpi,
         app->cfg,
         app->snap,
         app->sensors.History(),
         app->goldPrice.Snapshot(),
-        app->widgetHovered,
-        app->widgetPressed);
+        w.hovered,
+        w.pressed);
+}
+
+void DestroyAllWidgets(AppState* app) {
+    if (!app) return;
+    std::vector<HWND> hwnds;
+    hwnds.reserve(app->widgets.size());
+    for (auto& w : app->widgets) {
+        if (w.hwnd) hwnds.push_back(w.hwnd);
+    }
+    app->widgets.clear();
+    app->flyoutAnchorWidget = nullptr;
+    app->renderer.ResetWidgetTarget(nullptr);
+    for (HWND h : hwnds) {
+        if (IsWindow(h)) DestroyWindow(h);
+    }
 }
 
 void SyncWidgetPlacement(AppState* app, bool forceRender) {
-    EnsureWidgetWindow(app);
-    if (!app->hwndWidget) return;
+    if (!app) return;
+    app->host.RefreshHandles();
+    std::vector<TaskbarInfo> targets = app->host.ResolveTargetTaskbars(app->cfg);
+
+    auto hasTarget = [&](HWND tbHwnd) {
+        for (const auto& tb : targets) {
+            if (tb.hwndTaskbar == tbHwnd) return true;
+        }
+        return false;
+    };
+
+    // Remove widgets whose taskbar disappeared, changed mode, or lost parent.
+    std::vector<HWND> toDestroy;
+    app->widgets.erase(
+        std::remove_if(app->widgets.begin(), app->widgets.end(), [&](const WidgetInstance& w) {
+            bool keep = w.hwnd && IsWindow(w.hwnd) &&
+                        w.hwndTaskbar && IsWindow(w.hwndTaskbar) &&
+                        GetParent(w.hwnd) == w.hwndTaskbar &&
+                        hasTarget(w.hwndTaskbar);
+            if (!keep) {
+                if (w.hwnd) toDestroy.push_back(w.hwnd);
+                return true;
+            }
+            return false;
+        }),
+        app->widgets.end());
+
+    for (HWND h : toDestroy) {
+        app->renderer.ResetWidgetTarget(h);
+        if (app->flyoutAnchorWidget == h) app->flyoutAnchorWidget = nullptr;
+        if (IsWindow(h)) DestroyWindow(h);
+    }
+
+    // Create widgets for newly targeted taskbars and sync metadata.
+    for (const auto& tb : targets) {
+        if (!tb.hwndTaskbar || !IsWindow(tb.hwndTaskbar)) continue;
+        WidgetInstance* existing = nullptr;
+        for (auto& w : app->widgets) {
+            if (w.hwndTaskbar == tb.hwndTaskbar) {
+                existing = &w;
+                break;
+            }
+        }
+        if (existing) {
+            existing->isPrimary = tb.isPrimary;
+            existing->deviceName = tb.deviceName;
+            continue;
+        }
+
+        HWND hwnd = CreateWindowExW(
+            WS_EX_NOREDIRECTIONBITMAP | WS_EX_NOACTIVATE,
+            kWidgetClass, L"TaskbarMonitorWidget",
+            WS_CHILD | WS_CLIPSIBLINGS,
+            0, 0, 10, 10, tb.hwndTaskbar, nullptr, app->hInst, app);
+        if (!hwnd) continue;
+
+        WidgetInstance inst;
+        inst.hwnd = hwnd;
+        inst.hwndTaskbar = tb.hwndTaskbar;
+        inst.isPrimary = tb.isPrimary;
+        inst.deviceName = tb.deviceName;
+        app->widgets.push_back(std::move(inst));
+    }
+
+    std::vector<HWND> ownWindows;
+    ownWindows.reserve(app->widgets.size() + 3);
+    for (const auto& w : app->widgets) {
+        if (w.hwnd) ownWindows.push_back(w.hwnd);
+    }
+    if (app->hwndFlyout) ownWindows.push_back(app->hwndFlyout);
+    if (app->hwndMenu) ownWindows.push_back(app->hwndMenu);
+    if (app->hwndSubmenu) ownWindows.push_back(app->hwndSubmenu);
 
     WidgetDimensions dim = app->renderer.MeasureWidget(app->cfg);
-    TaskbarPlacement p = app->host.ComputePlacement(
-        dim.widthDip, dim.heightDip,
-        app->cfg.offsetXDip, app->cfg.hideInFullscreen,
-        app->hwndWidget, app->hwndFlyout);
+    bool anyResumedFromFullscreen = false;
 
-    bool prevVis = app->widgetVisible;
-    bool changedPosOrDpi = !app->lastPlacement.valid ||
-        p.ptWidgetClient.x != app->lastPlacement.ptWidgetClient.x ||
-        p.ptWidgetClient.y != app->lastPlacement.ptWidgetClient.y ||
-        p.szWidget.cx != app->lastPlacement.szWidget.cx ||
-        p.szWidget.cy != app->lastPlacement.szWidget.cy ||
-        p.dpi != app->lastPlacement.dpi;
-
-    app->lastPlacement = p;
-
-    if (!p.valid || !p.shouldShow) {
-        if (app->widgetVisible) {
-            app->widgetVisible = false;
-            ShowWindow(app->hwndWidget, SW_HIDE);
+    for (const auto& tb : targets) {
+        WidgetInstance* w = nullptr;
+        for (auto& item : app->widgets) {
+            if (item.hwndTaskbar == tb.hwndTaskbar) {
+                w = &item;
+                break;
+            }
         }
-        return;
+        if (!w || !w->hwnd) continue;
+
+        int offsetDip = GetMonitorOffsetDip(app->cfg, tb.isPrimary, tb.deviceName);
+        TaskbarPlacement p = app->host.ComputePlacementForTaskbar(
+            tb, dim.widthDip, dim.heightDip, offsetDip, ownWindows);
+
+        if (p.occludedByFullscreen) {
+            // Keep an already-visible WS_CHILD widget attached and visible under
+            // the fullscreen window so transient overlays (e.g. Snipaste) never
+            // expose a blank frame on dismiss; pause rendering and UIA updates
+            // on this monitor until the fullscreen window leaves it.
+            w->fullscreenPaused = true;
+            continue;
+        }
+
+        bool resumedFromFullscreen = w->fullscreenPaused;
+        w->fullscreenPaused = false;
+        if (resumedFromFullscreen) anyResumedFromFullscreen = true;
+
+        bool prevVis = w->visible;
+        bool changedPosOrDpi = !w->lastPlacement.valid ||
+            p.ptWidgetClient.x != w->lastPlacement.ptWidgetClient.x ||
+            p.ptWidgetClient.y != w->lastPlacement.ptWidgetClient.y ||
+            p.szWidget.cx != w->lastPlacement.szWidget.cx ||
+            p.szWidget.cy != w->lastPlacement.szWidget.cy ||
+            p.dpi != w->lastPlacement.dpi;
+
+        w->lastPlacement = p;
+
+        if (!p.valid || !p.shouldShow) {
+            if (w->visible) {
+                w->visible = false;
+                ShowWindow(w->hwnd, SW_HIDE);
+            }
+            continue;
+        }
+
+        bool needResizeOrShow = !prevVis || changedPosOrDpi;
+        if (needResizeOrShow) {
+            SetWindowPos(w->hwnd, HWND_TOP,
+                p.ptWidgetClient.x, p.ptWidgetClient.y,
+                p.szWidget.cx, p.szWidget.cy,
+                SWP_NOACTIVATE | SWP_NOREDRAW);
+        }
+
+        if (needResizeOrShow || forceRender || resumedFromFullscreen) {
+            w->visible = true;
+            RenderWidget(app, *w);
+        }
+
+        if (!prevVis) {
+            ShowWindow(w->hwnd, SW_SHOWNOACTIVATE);
+        }
+
+        app->host.EnsureAboveTaskbar(tb.hwndTaskbar, w->hwnd, app->hwndFlyout);
     }
 
-    bool needResizeOrShow = !prevVis || changedPosOrDpi;
-    if (needResizeOrShow) {
-        SetWindowPos(app->hwndWidget, HWND_TOP,
-            p.ptWidgetClient.x, p.ptWidgetClient.y,
-            p.szWidget.cx, p.szWidget.cy,
-            SWP_NOACTIVATE | SWP_NOREDRAW);
+    if (anyResumedFromFullscreen) {
+        UpdateTrayIcon(app, false);
     }
-
-    if (needResizeOrShow || forceRender) {
-        app->widgetVisible = true;
-        RenderWidget(app);
-    }
-
-    if (!prevVis) {
-        ShowWindow(app->hwndWidget, SW_SHOWNOACTIVATE);
-    }
-
-    app->host.EnsureAboveTaskbar(app->hwndWidget, app->hwndFlyout);
 }
 
 LRESULT CALLBACK WidgetWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -124,83 +232,100 @@ LRESULT CALLBACK WidgetWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
             return MA_NOACTIVATE;
 
         case WM_MOUSEMOVE: {
-            if (app->draggingOffset) {
+            WidgetInstance* w = FindWidget(app, hwnd);
+            if (!w) return 0;
+            if (w->draggingOffset) {
                 POINT pt{};
                 GetCursorPos(&pt);
-                float scale = static_cast<float>(app->lastPlacement.dpi ? app->lastPlacement.dpi : 96) / 96.0f;
-                int deltaDip = static_cast<int>(std::lround(static_cast<float>(pt.x - app->dragStartScreen.x) / scale));
-                app->cfg.offsetXDip = app->dragStartOffsetDip + deltaDip;
+                float scale = static_cast<float>(w->lastPlacement.dpi ? w->lastPlacement.dpi : 96) / 96.0f;
+                int deltaDip = static_cast<int>(std::lround(static_cast<float>(pt.x - w->dragStartScreen.x) / scale));
+                int desiredOffset = w->dragStartOffsetDip + deltaDip;
+                bool isPrimary = w->isPrimary;
+                std::wstring deviceName = w->deviceName;
+                SetMonitorOffsetDip(app->cfg, isPrimary, deviceName, desiredOffset);
                 SyncWidgetPlacement(app, true);
-                if (app->lastPlacement.shouldShow &&
-                    app->cfg.offsetXDip != app->lastPlacement.appliedOffsetXDip) {
-                    app->cfg.offsetXDip = app->lastPlacement.appliedOffsetXDip;
-                    app->dragStartOffsetDip = app->cfg.offsetXDip;
-                    app->dragStartScreen = pt;
+                w = FindWidget(app, hwnd);
+                if (w && w->lastPlacement.shouldShow &&
+                    desiredOffset != w->lastPlacement.appliedOffsetXDip) {
+                    SetMonitorOffsetDip(app->cfg, w->isPrimary, w->deviceName, w->lastPlacement.appliedOffsetXDip);
+                    w->dragStartOffsetDip = w->lastPlacement.appliedOffsetXDip;
+                    w->dragStartScreen = pt;
                 }
                 return 0;
             }
-            if (!app->widgetTracking) {
+            if (!w->tracking) {
                 TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, hwnd, 0 };
                 TrackMouseEvent(&tme);
-                app->widgetTracking = true;
+                w->tracking = true;
             }
-            if (!app->widgetHovered) {
-                app->widgetHovered = true;
-                RenderWidget(app);
+            if (!w->hovered) {
+                w->hovered = true;
+                RenderWidget(app, *w);
             }
             return 0;
         }
 
-        case WM_MOUSELEAVE:
-            app->widgetTracking = false;
-            if (app->widgetHovered || app->widgetPressed) {
-                app->widgetHovered = false;
-                app->widgetPressed = false;
-                RenderWidget(app);
+        case WM_MOUSELEAVE: {
+            WidgetInstance* w = FindWidget(app, hwnd);
+            if (!w) return 0;
+            w->tracking = false;
+            if (w->hovered || w->pressed) {
+                w->hovered = false;
+                w->pressed = false;
+                RenderWidget(app, *w);
             }
             return 0;
+        }
 
-        case WM_LBUTTONDOWN:
+        case WM_LBUTTONDOWN: {
+            WidgetInstance* w = FindWidget(app, hwnd);
+            if (!w) return 0;
             if (app->menuVisible) CloseMenu(app, false);
             if (GetKeyState(VK_MENU) < 0) {
-                app->draggingOffset = true;
-                GetCursorPos(&app->dragStartScreen);
-                app->dragStartOffsetDip = app->lastPlacement.appliedOffsetXDip;
+                w->draggingOffset = true;
+                GetCursorPos(&w->dragStartScreen);
+                w->dragStartOffsetDip = w->lastPlacement.appliedOffsetXDip;
                 SetCapture(hwnd);
             } else {
-                app->widgetPressed = true;
-                RenderWidget(app);
+                w->pressed = true;
+                RenderWidget(app, *w);
             }
             return 0;
+        }
 
-        case WM_LBUTTONUP:
-            if (app->draggingOffset) {
-                app->draggingOffset = false;
+        case WM_LBUTTONUP: {
+            WidgetInstance* w = FindWidget(app, hwnd);
+            if (!w) return 0;
+            if (w->draggingOffset) {
+                w->draggingOffset = false;
                 ReleaseCapture();
                 SaveConfig(app->cfg);
-            } else if (app->widgetPressed) {
-                app->widgetPressed = false;
-                RenderWidget(app);
-                ToggleFlyout(app);
+            } else if (w->pressed) {
+                w->pressed = false;
+                RenderWidget(app, *w);
+                ToggleFlyout(app, hwnd);
             }
             return 0;
+        }
 
         case WM_RBUTTONUP: {
             POINT pt{};
             GetCursorPos(&pt);
-            ShowContextMenu(app, pt);
+            ShowContextMenu(app, pt, false, hwnd);
             return 0;
         }
 
         case WM_DESTROY:
-            if (app->hwndWidget == hwnd) {
-                app->renderer.ResetWidgetTarget();
-                app->hwndWidget = nullptr;
-                app->widgetVisible = false;
-                app->widgetHovered = false;
-                app->widgetTracking = false;
-                app->widgetPressed = false;
-                app->draggingOffset = false;
+            app->renderer.ResetWidgetTarget(hwnd);
+            if (app->flyoutAnchorWidget == hwnd) app->flyoutAnchorWidget = nullptr;
+            if (WidgetInstance* w = FindWidget(app, hwnd)) {
+                w->hwnd = nullptr;
+                w->visible = false;
+                w->fullscreenPaused = false;
+                w->hovered = false;
+                w->tracking = false;
+                w->pressed = false;
+                w->draggingOffset = false;
             }
             return 0;
     }

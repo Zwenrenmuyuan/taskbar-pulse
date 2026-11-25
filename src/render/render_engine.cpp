@@ -156,17 +156,49 @@ float RenderEngine::MeasureTextWidth(
     return width;
 }
 
-void RenderEngine::ResetWidgetTarget() {
-    SafeRelease(m_dcompSurface);
-    SafeRelease(m_dcompVisual);
-    SafeRelease(m_dcompTarget);
-    m_dcompHwnd = nullptr;
-    m_dcompW = 0;
-    m_dcompH = 0;
+float RenderEngine::MeasureMenuLabelWidth(const wchar_t* text) const {
+    if (!text || !*text || !m_fmtMenuText || !m_dwFactory) return 0.0f;
+    UINT32 len = static_cast<UINT32>(wcslen(text));
+    IDWriteTextLayout* layout = nullptr;
+    float width = 0.0f;
+    if (SUCCEEDED(m_dwFactory->CreateTextLayout(text, len, m_fmtMenuText, 600.0f, 32.0f, &layout)) && layout) {
+        DWRITE_TEXT_METRICS tm{};
+        if (SUCCEEDED(layout->GetMetrics(&tm))) {
+            width = tm.widthIncludingTrailingWhitespace;
+        }
+        layout->Release();
+    }
+    return width;
+}
+
+void RenderEngine::ReleaseDCompTargetEntry(DCompTargetEntry& entry) {
+    SafeRelease(entry.surface);
+    SafeRelease(entry.visual);
+    SafeRelease(entry.target);
+    entry.hwnd = nullptr;
+    entry.width = 0;
+    entry.height = 0;
+}
+
+void RenderEngine::ResetWidgetTarget(HWND hwnd) {
+    if (!hwnd) {
+        for (auto& entry : m_dcompTargets) {
+            ReleaseDCompTargetEntry(entry);
+        }
+        m_dcompTargets.clear();
+        return;
+    }
+    for (auto it = m_dcompTargets.begin(); it != m_dcompTargets.end(); ++it) {
+        if (it->hwnd == hwnd) {
+            ReleaseDCompTargetEntry(*it);
+            m_dcompTargets.erase(it);
+            break;
+        }
+    }
 }
 
 void RenderEngine::ResetDCompDevice() {
-    ResetWidgetTarget();
+    ResetWidgetTarget(nullptr);
     SafeRelease(m_d2dDc);
     SafeRelease(m_dcompDevice);
     SafeRelease(m_d2dDevice);
@@ -220,47 +252,57 @@ bool RenderEngine::EnsureDCompDevice() {
     return true;
 }
 
-bool RenderEngine::EnsureDCompSurface(HWND hwnd, int widthPx, int heightPx) {
-    if (!hwnd || widthPx <= 0 || heightPx <= 0) return false;
-    if (!EnsureDCompDevice()) return false;
+RenderEngine::DCompTargetEntry* RenderEngine::EnsureDCompSurface(HWND hwnd, int widthPx, int heightPx) {
+    if (!hwnd || widthPx <= 0 || heightPx <= 0) return nullptr;
+    if (!EnsureDCompDevice()) return nullptr;
 
-    if (m_dcompHwnd != hwnd || !m_dcompTarget || !m_dcompVisual) {
-        ResetWidgetTarget();
-        if (FAILED(m_dcompDevice->CreateTargetForHwnd(hwnd, TRUE, &m_dcompTarget)) || !m_dcompTarget) {
-            ResetWidgetTarget();
-            return false;
+    DCompTargetEntry* entry = nullptr;
+    for (auto& existing : m_dcompTargets) {
+        if (existing.hwnd == hwnd) {
+            entry = &existing;
+            break;
         }
-        if (FAILED(m_dcompDevice->CreateVisual(&m_dcompVisual)) || !m_dcompVisual) {
-            ResetWidgetTarget();
-            return false;
-        }
-        if (FAILED(m_dcompTarget->SetRoot(m_dcompVisual))) {
-            ResetWidgetTarget();
-            return false;
-        }
-        m_dcompHwnd = hwnd;
     }
 
-    if (!m_dcompSurface || m_dcompW != widthPx || m_dcompH != heightPx) {
-        SafeRelease(m_dcompSurface);
+    if (!entry) {
+        DCompTargetEntry created;
+        created.hwnd = hwnd;
+        if (FAILED(m_dcompDevice->CreateTargetForHwnd(hwnd, TRUE, &created.target)) || !created.target) {
+            ReleaseDCompTargetEntry(created);
+            return nullptr;
+        }
+        if (FAILED(m_dcompDevice->CreateVisual(&created.visual)) || !created.visual) {
+            ReleaseDCompTargetEntry(created);
+            return nullptr;
+        }
+        if (FAILED(created.target->SetRoot(created.visual))) {
+            ReleaseDCompTargetEntry(created);
+            return nullptr;
+        }
+        m_dcompTargets.push_back(created);
+        entry = &m_dcompTargets.back();
+    }
+
+    if (!entry->surface || entry->width != widthPx || entry->height != heightPx) {
+        SafeRelease(entry->surface);
         if (FAILED(m_dcompDevice->CreateSurface(
                 static_cast<UINT>(widthPx), static_cast<UINT>(heightPx),
                 DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED,
-                &m_dcompSurface)) || !m_dcompSurface) {
-            m_dcompW = 0;
-            m_dcompH = 0;
-            return false;
+                &entry->surface)) || !entry->surface) {
+            entry->width = 0;
+            entry->height = 0;
+            return nullptr;
         }
-        if (FAILED(m_dcompVisual->SetContent(m_dcompSurface))) {
-            SafeRelease(m_dcompSurface);
-            m_dcompW = 0;
-            m_dcompH = 0;
-            return false;
+        if (FAILED(entry->visual->SetContent(entry->surface))) {
+            SafeRelease(entry->surface);
+            entry->width = 0;
+            entry->height = 0;
+            return nullptr;
         }
-        m_dcompW = widthPx;
-        m_dcompH = heightPx;
+        entry->width = widthPx;
+        entry->height = heightPx;
     }
-    return true;
+    return entry;
 }
 
 bool RenderEngine::RenderWidgetViaDComp(
@@ -276,14 +318,15 @@ bool RenderEngine::RenderWidgetViaDComp(
     bool isHovered,
     bool isPressed) {
     for (int attempt = 0; attempt < 2; ++attempt) {
-        if (!EnsureDCompSurface(hwnd, widthPx, heightPx)) {
+        DCompTargetEntry* entry = EnsureDCompSurface(hwnd, widthPx, heightPx);
+        if (!entry || !entry->surface) {
             ResetDCompDevice();
             continue;
         }
 
         IDXGISurface* dxgiSurf = nullptr;
         POINT offset{};
-        HRESULT hr = m_dcompSurface->BeginDraw(nullptr, IID_PPV_ARGS(&dxgiSurf), &offset);
+        HRESULT hr = entry->surface->BeginDraw(nullptr, IID_PPV_ARGS(&dxgiSurf), &offset);
         if (FAILED(hr) || !dxgiSurf) {
             SafeRelease(dxgiSurf);
             ResetDCompDevice();
@@ -299,7 +342,7 @@ bool RenderEngine::RenderWidgetViaDComp(
         if (FAILED(hr) || !d2dBmp) {
             SafeRelease(d2dBmp);
             SafeRelease(dxgiSurf);
-            m_dcompSurface->EndDraw();
+            entry->surface->EndDraw();
             ResetDCompDevice();
             continue;
         }
@@ -329,7 +372,7 @@ bool RenderEngine::RenderWidgetViaDComp(
         SafeRelease(d2dBmp);
         SafeRelease(dxgiSurf);
 
-        HRESULT hrSurfEnd = m_dcompSurface->EndDraw();
+        HRESULT hrSurfEnd = entry->surface->EndDraw();
         HRESULT hrCommit = m_dcompDevice->Commit();
 
         if (SUCCEEDED(hrEnd) && SUCCEEDED(hrSurfEnd) && SUCCEEDED(hrCommit)) {

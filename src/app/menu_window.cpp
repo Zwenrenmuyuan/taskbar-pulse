@@ -1,8 +1,10 @@
 #include "app/menu_window.hpp"
 #include "app/flyout_window.hpp"
+#include "app/widget_window.hpp"
 #include "resource.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace {
 
@@ -48,8 +50,8 @@ FluentMenuSpec BuildMainMenuSpec(const AppConfig& cfg, bool flyoutVisible) {
         { IDM_TOGGLE_GPUTEMP, false, false, false, MenuCheckStyle::Check, cfg.showGpuTemp, L"显示 GPU 温度" },
         { IDM_TOGGLE_GOLD, false, false, false, MenuCheckStyle::Check, cfg.showGoldPrice, L"显示国际金价（元/克）" },
         { 0, true, false, false, MenuCheckStyle::None, false, L"" },
+        { kSubDisplay, false, false, true, MenuCheckStyle::None, false, L"显示位置" },
         { kSubRate, false, false, true, MenuCheckStyle::None, false, L"刷新频率" },
-        { IDM_TOGGLE_FULLSCREEN, false, false, false, MenuCheckStyle::Check, cfg.hideInFullscreen, L"全屏游戏/视频时自动隐藏" },
         { IDM_RESET_OFFSET, false, false, false, MenuCheckStyle::None, false, L"重置水平位置偏移" },
         { 0, true, false, false, MenuCheckStyle::None, false, L"" },
         { IDM_TOGGLE_AUTOSTART, false, false, false, MenuCheckStyle::Check, IsAutoStartEnabled(), L"开机自动启动" },
@@ -59,8 +61,9 @@ FluentMenuSpec BuildMainMenuSpec(const AppConfig& cfg, bool flyoutVisible) {
     return spec;
 }
 
-FluentMenuSpec BuildSubmenuSpec(const AppConfig& cfg, UINT subId) {
+FluentMenuSpec BuildSubmenuSpec(AppState* app, UINT subId) {
     FluentMenuSpec spec;
+    const AppConfig& cfg = app->cfg;
     if (subId == kSubStyle) {
         spec.cardWidthDip = 186.0f;
         spec.items = {
@@ -89,6 +92,80 @@ FluentMenuSpec BuildSubmenuSpec(const AppConfig& cfg, UINT subId) {
             { IDM_RATE_1000, false, false, false, MenuCheckStyle::Radio, cfg.refreshMs == 1000, L"1.0 秒（推荐低占用）" },
             { IDM_RATE_2000, false, false, false, MenuCheckStyle::Radio, cfg.refreshMs == 2000, L"2.0 秒（极省电）" },
         };
+    } else if (subId == kSubDisplay) {
+        app->host.RefreshHandles(true);
+        app->menuDisplayDevices.clear();
+
+        auto formatMonitorDetail = [](const TaskbarInfo& tb) -> std::wstring {
+            wchar_t res[48]{};
+            int w = tb.rcMonitor.right - tb.rcMonitor.left;
+            int h = tb.rcMonitor.bottom - tb.rcMonitor.top;
+            if (w > 0 && h > 0) {
+                _snwprintf_s(res, _countof(res), _TRUNCATE, L"(%d×%d)", w, h);
+            }
+            std::wstring out;
+            if (!tb.friendlyName.empty()) {
+                out += L" · ";
+                out += tb.friendlyName;
+            }
+            if (res[0] != L'\0') {
+                out += L" ";
+                out += res;
+            }
+            return out;
+        };
+
+        std::wstring primaryLabel = L"仅主显示器";
+        std::vector<const TaskbarInfo*> secondaryTaskbars;
+        for (const auto& tb : app->host.Taskbars()) {
+            if (!tb.hwndTaskbar || !IsWindow(tb.hwndTaskbar)) continue;
+            if (tb.isPrimary) {
+                primaryLabel += formatMonitorDetail(tb);
+            } else if (IsWindowVisible(tb.hwndTaskbar)) {
+                secondaryTaskbars.push_back(&tb);
+            }
+        }
+
+        const std::wstring wantKey = SanitizeMonitorKey(cfg.displayDevice);
+        bool specificMatched = false;
+
+        spec.items.push_back({ IDM_DISPLAY_ALL, false, false, false, MenuCheckStyle::Radio,
+            cfg.displayMode == DisplayTargetMode::All, L"所有显示器" });
+        spec.items.push_back({ IDM_DISPLAY_PRIMARY, false, false, false, MenuCheckStyle::Radio,
+            cfg.displayMode == DisplayTargetMode::Primary, primaryLabel });
+
+        if (!secondaryTaskbars.empty() || cfg.displayMode == DisplayTargetMode::Specific) {
+            spec.items.push_back({ 0, true, false, false, MenuCheckStyle::None, false, L"" });
+        }
+
+        int displayNum = 2;
+        const size_t maxSpecific = static_cast<size_t>(IDM_DISPLAY_SPEC_MAX - IDM_DISPLAY_SPEC_BASE + 1);
+        for (const TaskbarInfo* tb : secondaryTaskbars) {
+            if (app->menuDisplayDevices.size() >= maxSpecific) break;
+            UINT cmdId = IDM_DISPLAY_SPEC_BASE + static_cast<UINT>(app->menuDisplayDevices.size());
+            app->menuDisplayDevices.push_back(tb->deviceName);
+            bool checked = (cfg.displayMode == DisplayTargetMode::Specific &&
+                SanitizeMonitorKey(tb->deviceName) == wantKey);
+            if (checked) specificMatched = true;
+
+            wchar_t prefix[32]{};
+            _snwprintf_s(prefix, _countof(prefix), _TRUNCATE, L"显示器 %d", displayNum++);
+            std::wstring label = std::wstring(prefix) + formatMonitorDetail(*tb);
+            spec.items.push_back({ cmdId, false, false, false, MenuCheckStyle::Radio, checked, std::move(label) });
+        }
+
+        if (cfg.displayMode == DisplayTargetMode::Specific && !specificMatched) {
+            spec.items.push_back({ 0, false, false, false, MenuCheckStyle::Radio, true,
+                L"已选副屏（未连接，暂回落主屏）" });
+        }
+
+        float maxTextW = 0.0f;
+        for (const auto& it : spec.items) {
+            if (!it.isSeparator) {
+                maxTextW = std::max(maxTextW, app->renderer.MeasureMenuLabelWidth(it.label.c_str()));
+            }
+        }
+        spec.cardWidthDip = std::clamp(maxTextW + 46.0f, 196.0f, 340.0f);
     }
     return spec;
 }
@@ -155,7 +232,7 @@ void OpenSubmenuForRow(AppState* app, int rowIdx, bool selectFirst) {
     KillTimer(app->hwndMenu, kTimerSubCloseId);
     app->pendingSubIdx = -1;
 
-    app->submenuSpec = BuildSubmenuSpec(app->cfg, item.cmdId);
+    app->submenuSpec = BuildSubmenuSpec(app, item.cmdId);
     app->openSubIdx = rowIdx;
     app->submenuHoverIdx = selectFirst ? 0 : -1;
 
@@ -202,7 +279,7 @@ void OpenSubmenuForRow(AppState* app, int rowIdx, bool selectFirst) {
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
 }
 
-void ShowContextMenu(AppState* app, POINT ptScreen, bool openedFromFlyout) {
+void ShowContextMenu(AppState* app, POINT ptScreen, bool openedFromFlyout, HWND anchorWidget) {
     if (!app->hwndMenu) return;
 
     if (app->menuVisible && openedFromFlyout) {
@@ -216,7 +293,30 @@ void ShowContextMenu(AppState* app, POINT ptScreen, bool openedFromFlyout) {
     mi.cbSize = sizeof(mi);
     GetMonitorInfoW(hMon, &mi);
 
-    UINT dpi = app->lastPlacement.valid ? app->lastPlacement.dpi : GetDpiForSystem();
+    UINT dpi = 0;
+    if (const WidgetInstance* w = FindWidget(app, anchorWidget)) {
+        if (w->lastPlacement.valid) dpi = w->lastPlacement.dpi;
+    }
+    if (dpi == 0) {
+        for (const auto& w : app->widgets) {
+            if (w.lastPlacement.valid && EqualRect(&w.lastPlacement.rcMonitor, &mi.rcMonitor)) {
+                dpi = w.lastPlacement.dpi;
+                break;
+            }
+        }
+    }
+    if (dpi == 0) {
+        for (const auto& tb : app->host.Taskbars()) {
+            if (tb.hMonitor == hMon && tb.dpi != 0) {
+                dpi = tb.dpi;
+                break;
+            }
+        }
+    }
+    if (dpi == 0) {
+        const WidgetInstance* pref = FindPreferredWidget(app);
+        dpi = (pref && pref->lastPlacement.valid) ? pref->lastPlacement.dpi : GetDpiForSystem();
+    }
     if (dpi == 0) dpi = 96;
     float scale = static_cast<float>(dpi) / 96.0f;
 

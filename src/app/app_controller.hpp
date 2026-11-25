@@ -38,12 +38,30 @@ inline constexpr UINT kSubStyle = 9001;
 inline constexpr UINT kSubTheme = 9002;
 inline constexpr UINT kSubRow2 = 9003;
 inline constexpr UINT kSubRate = 9004;
+inline constexpr UINT kSubDisplay = 9005;
+
+struct WidgetInstance {
+    HWND hwnd = nullptr;
+    HWND hwndTaskbar = nullptr;
+    bool isPrimary = false;
+    std::wstring deviceName;
+
+    TaskbarPlacement lastPlacement{};
+    bool visible = false;
+    bool fullscreenPaused = false;
+    bool hovered = false;
+    bool tracking = false;
+    bool pressed = false;
+
+    bool draggingOffset = false;
+    POINT dragStartScreen{};
+    int dragStartOffsetDip = 0;
+};
 
 struct AppState {
     HINSTANCE hInst = nullptr;
     HICON hIcon = nullptr;
     HWND hwndHost = nullptr;
-    HWND hwndWidget = nullptr;
     HWND hwndFlyout = nullptr;
     HWND hwndMenu = nullptr;
     HWND hwndSubmenu = nullptr;
@@ -56,15 +74,8 @@ struct AppState {
     RenderEngine renderer;
     TaskbarHost host;
 
-    TaskbarPlacement lastPlacement{};
-    bool widgetVisible = false;
-    bool widgetHovered = false;
-    bool widgetTracking = false;
-    bool widgetPressed = false;
-
-    bool draggingOffset = false;
-    POINT dragStartScreen{};
-    int dragStartOffsetDip = 0;
+    std::vector<WidgetInstance> widgets;
+    HWND flyoutAnchorWidget = nullptr;
 
     bool flyoutVisible = false;
     bool suppressFlyoutDeactivate = false;
@@ -84,6 +95,7 @@ struct AppState {
     FluentMenuSpec submenuSpec{};
     std::vector<RECT> menuItemRects;
     std::vector<RECT> submenuItemRects;
+    std::vector<std::wstring> menuDisplayDevices;
     int menuHoverIdx = -1;
     int submenuHoverIdx = -1;
     int openSubIdx = -1;

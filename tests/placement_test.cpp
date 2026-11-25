@@ -24,6 +24,10 @@ int main() {
     // Negative monitor origins, overlapping bounds, unsorted controls, exact fit.
     assert(FindFreeTaskbarPosition(-1916, -352, 434, -800, 6,
         {{-900, -500}, {-1920, -1800}, {-940, -600}}) == -1380);
+    // Secondary taskbar on right monitor [2560, 4480] with no TrayNotifyWnd:
+    // preferred right-edge alignment snaps flush beside the Win11 secondary clock.
+    assert(FindFreeTaskbarPosition(2564, 4476, 356, 4476 - 356, 6,
+        {{2560, 2608}, {3200, 3520}, {4390, 4476}}) == 4390 - 6 - 356);
     assert(FindFreeTaskbarPosition(0, 100, 100, 200, 0, {}) == 0);
     assert(!FindFreeTaskbarPosition(0, 99, 100, 0, 0, {}));
 

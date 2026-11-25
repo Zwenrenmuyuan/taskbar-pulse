@@ -22,7 +22,7 @@ int main() {
             for (int offset : {0, 242, -800}) {
                 TaskbarPlacement placement;
                 for (int retry = 0; retry < 50; ++retry) {
-                    placement = host.ComputePlacement(434, 40, offset, false, nullptr, nullptr);
+                    placement = host.ComputePlacement(434, 40, offset, nullptr, nullptr);
                     if (placement.shouldShow) break;
                     Sleep(100);
                 }

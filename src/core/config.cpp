@@ -10,13 +10,57 @@
 #include "core/config.hpp"
 #include <algorithm>
 #include <cstdio>
+#include <cwctype>
+#include <vector>
 
 namespace {
 constexpr wchar_t kSection[] = L"General";
+constexpr wchar_t kOffsetsSection[] = L"MonitorOffsets";
 constexpr wchar_t kRunRegPath[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 constexpr wchar_t kRunValueName[] = L"Win11TaskbarMonitor";
 constexpr wchar_t kThemeRegPath[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
 } // namespace
+
+std::wstring SanitizeMonitorKey(const std::wstring& deviceName) {
+    std::wstring s = deviceName;
+    if (s.rfind(L"\\\\.\\", 0) == 0) {
+        s.erase(0, 4);
+    }
+    std::wstring out;
+    out.reserve(s.size());
+    for (wchar_t ch : s) {
+        if (ch == L'=' || ch == L'[' || ch == L']' || ch == L'\r' || ch == L'\n') continue;
+        out.push_back(static_cast<wchar_t>(std::towupper(ch)));
+    }
+    return out;
+}
+
+int GetMonitorOffsetDip(const AppConfig& cfg, bool isPrimary, const std::wstring& deviceName) {
+    if (isPrimary) return cfg.offsetXDip;
+    std::wstring key = SanitizeMonitorKey(deviceName);
+    if (key.empty()) return 0;
+    auto it = cfg.secondaryOffsetsDip.find(key);
+    return (it != cfg.secondaryOffsetsDip.end()) ? it->second : 0;
+}
+
+void SetMonitorOffsetDip(AppConfig& cfg, bool isPrimary, const std::wstring& deviceName, int offsetDip) {
+    if (isPrimary) {
+        cfg.offsetXDip = offsetDip;
+        return;
+    }
+    std::wstring key = SanitizeMonitorKey(deviceName);
+    if (key.empty()) return;
+    if (offsetDip == 0) {
+        cfg.secondaryOffsetsDip.erase(key);
+    } else {
+        cfg.secondaryOffsetsDip[key] = offsetDip;
+    }
+}
+
+void ResetAllMonitorOffsets(AppConfig& cfg) {
+    cfg.offsetXDip = 0;
+    cfg.secondaryOffsetsDip.clear();
+}
 
 std::wstring GetExePath() {
     std::wstring buf(MAX_PATH, L'\0');
@@ -60,7 +104,6 @@ AppConfig LoadConfig() {
 
     cfg.showGpuTemp = GetPrivateProfileIntW(kSection, L"ShowGpuTemp", 1, path.c_str()) != 0;
     cfg.showGoldPrice = GetPrivateProfileIntW(kSection, L"ShowGoldPrice", 1, path.c_str()) != 0;
-    cfg.hideInFullscreen = GetPrivateProfileIntW(kSection, L"HideInFullscreen", 1, path.c_str()) != 0;
 
     int refresh = static_cast<int>(GetPrivateProfileIntW(kSection, L"RefreshMs", 1000, path.c_str()));
     cfg.refreshMs = std::clamp(refresh, 250, 10000);
@@ -68,6 +111,35 @@ AppConfig LoadConfig() {
     wchar_t offsetBuf[32]{};
     GetPrivateProfileStringW(kSection, L"OffsetXDip", L"0", offsetBuf, 32, path.c_str());
     cfg.offsetXDip = _wtoi(offsetBuf);
+
+    int dispMode = static_cast<int>(GetPrivateProfileIntW(kSection, L"DisplayMode", 0, path.c_str()));
+    if (dispMode == 1) cfg.displayMode = DisplayTargetMode::Primary;
+    else if (dispMode == 2) cfg.displayMode = DisplayTargetMode::Specific;
+    else cfg.displayMode = DisplayTargetMode::All;
+
+    wchar_t devBuf[128]{};
+    GetPrivateProfileStringW(kSection, L"DisplayDevice", L"", devBuf, _countof(devBuf), path.c_str());
+    cfg.displayDevice = devBuf;
+    if (cfg.displayMode == DisplayTargetMode::Specific && cfg.displayDevice.empty()) {
+        cfg.displayMode = DisplayTargetMode::Primary;
+    }
+
+    std::vector<wchar_t> secBuf(4096, L'\0');
+    DWORD secLen = GetPrivateProfileSectionW(kOffsetsSection, secBuf.data(), static_cast<DWORD>(secBuf.size()), path.c_str());
+    if (secLen > 0) {
+        const wchar_t* cur = secBuf.data();
+        while (*cur != L'\0') {
+            std::wstring entry(cur);
+            cur += entry.size() + 1;
+            auto eq = entry.find(L'=');
+            if (eq == std::wstring::npos || eq == 0) continue;
+            std::wstring key = SanitizeMonitorKey(entry.substr(0, eq));
+            int val = _wtoi(entry.substr(eq + 1).c_str());
+            if (!key.empty() && val != 0) {
+                cfg.secondaryOffsetsDip[key] = val;
+            }
+        }
+    }
 
     return cfg;
 }
@@ -85,9 +157,20 @@ void SaveConfig(const AppConfig& cfg) {
     writeInt(L"Row2Col1Mode", static_cast<int>(cfg.row2Col1));
     writeInt(L"ShowGpuTemp", cfg.showGpuTemp ? 1 : 0);
     writeInt(L"ShowGoldPrice", cfg.showGoldPrice ? 1 : 0);
-    writeInt(L"HideInFullscreen", cfg.hideInFullscreen ? 1 : 0);
     writeInt(L"RefreshMs", cfg.refreshMs);
     writeInt(L"OffsetXDip", cfg.offsetXDip);
+    writeInt(L"DisplayMode", static_cast<int>(cfg.displayMode));
+    WritePrivateProfileStringW(kSection, L"DisplayDevice",
+        cfg.displayMode == DisplayTargetMode::Specific ? cfg.displayDevice.c_str() : L"",
+        path.c_str());
+
+    WritePrivateProfileStringW(kOffsetsSection, nullptr, nullptr, path.c_str());
+    for (const auto& kv : cfg.secondaryOffsetsDip) {
+        if (kv.first.empty() || kv.second == 0) continue;
+        wchar_t buf[32];
+        _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"%d", kv.second);
+        WritePrivateProfileStringW(kOffsetsSection, kv.first.c_str(), buf, path.c_str());
+    }
 }
 
 bool IsSystemLightTheme() {

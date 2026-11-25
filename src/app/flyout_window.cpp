@@ -16,15 +16,29 @@ void RenderAndPositionFlyout(AppState* app) {
     if (!app->flyoutVisible || !app->hwndFlyout) return;
     WidgetDimensions dim = RenderEngine::FlyoutDimensions();
 
-    UINT dpi = app->lastPlacement.valid ? app->lastPlacement.dpi : GetDpiForSystem();
+    const WidgetInstance* anchor = FindPreferredWidget(app, app->flyoutAnchorWidget);
+    bool hasPlacement = (anchor != nullptr && anchor->lastPlacement.valid);
+
+    UINT dpi = hasPlacement ? anchor->lastPlacement.dpi : GetDpiForSystem();
     if (dpi == 0) dpi = 96;
     float scale = static_cast<float>(dpi) / 96.0f;
     int fwPx = static_cast<int>(std::lround(dim.widthDip * scale));
     int fhPx = static_cast<int>(std::lround(dim.heightDip * scale));
 
-    RECT rcAnchor = app->lastPlacement.rcTaskbar;
-    RECT rcMon = app->lastPlacement.rcMonitor;
-    if (!app->lastPlacement.valid) {
+    RECT rcAnchor{};
+    RECT rcMon{};
+    bool taskbarAtTop = false;
+    int centerX = 0;
+
+    if (hasPlacement) {
+        const TaskbarPlacement& p = anchor->lastPlacement;
+        rcAnchor = p.rcTaskbar;
+        rcMon = p.rcMonitor;
+        taskbarAtTop = p.taskbarAtTop;
+        centerX = p.shouldShow
+            ? (p.ptWidget.x + p.szWidget.cx / 2)
+            : (rcMon.right - fwPx / 2 - 16);
+    } else {
         POINT pt{};
         GetCursorPos(&pt);
         HMONITOR hMon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
@@ -33,14 +47,12 @@ void RenderAndPositionFlyout(AppState* app) {
         GetMonitorInfoW(hMon, &mi);
         rcMon = mi.rcMonitor;
         rcAnchor = RECT{ pt.x - fwPx / 2, mi.rcWork.bottom, pt.x + fwPx / 2, mi.rcMonitor.bottom };
+        centerX = rcMon.right - fwPx / 2 - 16;
     }
 
-    int centerX = app->lastPlacement.valid && app->lastPlacement.shouldShow
-        ? (app->lastPlacement.ptWidget.x + app->lastPlacement.szWidget.cx / 2)
-        : (rcMon.right - fwPx / 2 - 16);
     int gap = static_cast<int>(std::lround(10.0f * scale));
     int fx = std::clamp(centerX - fwPx / 2, static_cast<int>(rcMon.left) + gap, static_cast<int>(rcMon.right) - fwPx - gap);
-    int fy = app->lastPlacement.taskbarAtTop
+    int fy = taskbarAtTop
         ? (rcAnchor.bottom + gap)
         : (rcAnchor.top - fhPx - gap);
     fy = std::clamp(fy, static_cast<int>(rcMon.top) + gap, static_cast<int>(rcMon.bottom) - fhPx - gap);
@@ -56,8 +68,9 @@ void RenderAndPositionFlyout(AppState* app) {
         app->flyoutActionRects);
 }
 
-void ShowFlyout(AppState* app) {
+void ShowFlyout(AppState* app, HWND anchorWidget) {
     if (!app->hwndFlyout) return;
+    app->flyoutAnchorWidget = anchorWidget;
     app->flyoutVisible = true;
     app->flyoutHoverBtn = -1;
     RenderAndPositionFlyout(app);
@@ -65,15 +78,19 @@ void ShowFlyout(AppState* app) {
     SetForegroundWindow(app->hwndFlyout);
 }
 
-void ToggleFlyout(AppState* app) {
+void ToggleFlyout(AppState* app, HWND anchorWidget) {
     if (app->flyoutVisible) {
+        if (anchorWidget && anchorWidget != app->flyoutAnchorWidget) {
+            ShowFlyout(app, anchorWidget);
+            return;
+        }
         HideFlyout(app);
         return;
     }
     if (GetTickCount64() - app->lastFlyoutClosedTick < 240) {
         return;
     }
-    ShowFlyout(app);
+    ShowFlyout(app, anchorWidget);
 }
 
 LRESULT CALLBACK FlyoutWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {

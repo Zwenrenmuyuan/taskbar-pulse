@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <string>
 
 enum class VisualStyle : int {
@@ -20,6 +21,12 @@ enum class Row2Col1Mode : int {
     CpuTemp = 3,
 };
 
+enum class DisplayTargetMode : int {
+    All = 0,
+    Primary = 1,
+    Specific = 2,
+};
+
 struct AppConfig {
     VisualStyle style = VisualStyle::Capsule;
     ThemeMode theme = ThemeMode::Auto;
@@ -27,10 +34,17 @@ struct AppConfig {
     Row2Col1Mode row2Col1 = Row2Col1Mode::CpuFreq;
     bool showGpuTemp = true;
     bool showGoldPrice = true;
-    bool hideInFullscreen = true;
     int refreshMs = 1000;
     int offsetXDip = 0;
+    DisplayTargetMode displayMode = DisplayTargetMode::All;
+    std::wstring displayDevice;
+    std::map<std::wstring, int> secondaryOffsetsDip;
 };
+
+std::wstring SanitizeMonitorKey(const std::wstring& deviceName);
+int GetMonitorOffsetDip(const AppConfig& cfg, bool isPrimary, const std::wstring& deviceName);
+void SetMonitorOffsetDip(AppConfig& cfg, bool isPrimary, const std::wstring& deviceName, int offsetDip);
+void ResetAllMonitorOffsets(AppConfig& cfg);
 
 std::wstring GetExePath();
 std::wstring GetConfigIniPath();

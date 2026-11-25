@@ -4,6 +4,6 @@
 
 void HideFlyout(AppState* app);
 void RenderAndPositionFlyout(AppState* app);
-void ShowFlyout(AppState* app);
-void ToggleFlyout(AppState* app);
+void ShowFlyout(AppState* app, HWND anchorWidget = nullptr);
+void ToggleFlyout(AppState* app, HWND anchorWidget = nullptr);
 LRESULT CALLBACK FlyoutWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
