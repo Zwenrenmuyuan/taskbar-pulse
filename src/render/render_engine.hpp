@@ -47,6 +47,23 @@ struct WidgetDimensions {
     float heightDip = 40.0f;
 };
 
+struct FlyoutDisplayItem {
+    std::wstring deviceName;
+    std::wstring title;
+    std::wstring badge;
+    std::wstring subtitle;
+    bool isPrimary = false;
+    bool selected = false;
+};
+
+struct FlyoutDisplayOptions {
+    int count = 2; // 2..4 segmented choices
+    int activeIndex = 0;
+    bool usesSheet = false; // true when 4+ monitors -> 3rd segment opens bottom modal sheet
+    std::wstring labels[4] = { L"全部", L"主屏", L"", L"" };
+    std::vector<FlyoutDisplayItem> items;
+};
+
 class RenderEngine {
 public:
     RenderEngine();
@@ -79,11 +96,17 @@ public:
         const AppConfig& cfg,
         const SystemSnapshot& snap,
         const HistoryBuffer& history,
+        const GoldQuote& gold,
+        bool autoStartEnabled,
+        const FlyoutDisplayOptions& displayOpts,
         const AnimatedMetrics& anim,
         const FlyoutAnimState& flyAnim,
-        RECT outActionRectsPx[4]);
+        FlyoutControl hoverCtrl,
+        FlyoutControl pressedCtrl,
+        int sheetHoverIdx,
+        FlyoutHitMap& outHitMap);
 
-    static WidgetDimensions FlyoutDimensions() { return { 380.0f, 352.0f }; }
+    static WidgetDimensions FlyoutDimensions() { return { 352.0f, 384.0f }; }
     static constexpr float MenuPadX() { return 8.0f; }
     static constexpr float MenuPadTop() { return 6.0f; }
     static constexpr float MenuPadBottom() { return 10.0f; }
@@ -170,9 +193,15 @@ private:
         const AppConfig& cfg,
         const SystemSnapshot& snap,
         const HistoryBuffer& history,
+        const GoldQuote& gold,
+        bool autoStartEnabled,
+        const FlyoutDisplayOptions& displayOpts,
         const AnimatedMetrics& anim,
         const FlyoutAnimState& flyAnim,
-        RECT outActionRectsPx[4]);
+        FlyoutControl hoverCtrl,
+        FlyoutControl pressedCtrl,
+        int sheetHoverIdx,
+        FlyoutHitMap& outHitMap);
 
     void DrawMenuContent(
         ID2D1RenderTarget* rt,
@@ -209,11 +238,15 @@ private:
     IDWriteTextFormat* m_fmtMinLabel = nullptr;
     IDWriteTextFormat* m_fmtMinValue = nullptr;
     IDWriteTextFormat* m_fmtMinSub = nullptr;
+    IDWriteTextFormat* m_fmtMinSubVal = nullptr;
     IDWriteTextFormat* m_fmtMenuText = nullptr;
     IDWriteTextFormat* m_fmtFlyTitle = nullptr;
     IDWriteTextFormat* m_fmtFlySub = nullptr;
+    IDWriteTextFormat* m_fmtFlyTiny = nullptr;
     IDWriteTextFormat* m_fmtFlyCardLabel = nullptr;
     IDWriteTextFormat* m_fmtFlyCardBig = nullptr;
+    IDWriteTextFormat* m_fmtFlyUnit = nullptr;
+    IDWriteTextFormat* m_fmtFlyBadge = nullptr;
     IDWriteTextFormat* m_fmtFlyBtn = nullptr;
 
     ID3D11Device* m_d3dDevice = nullptr;

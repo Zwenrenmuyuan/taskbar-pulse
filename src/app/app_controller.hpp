@@ -165,16 +165,21 @@ struct AppState {
     UINT flyoutDpi = 96;
     bool suppressFlyoutDeactivate = false;
     ULONGLONG lastFlyoutClosedTick = 0;
-    int flyoutHoverBtn = -1;
-    int flyoutPressedBtn = -1;
+    bool flyoutSettingsPage = false;
+    bool flyoutSheetOpen = false;
+    int flyoutSheetHoverIdx = -1;
+    float flyoutSheetScrollTarget = 0.0f;
+    std::vector<FlyoutDisplayItem> flyoutDisplayItems;
+    bool autoStartCached = false;
+    int flyoutHoverRow = -1;
+    FlyoutControl flyoutHoverCtrl = FlyoutControl::None;
+    FlyoutControl flyoutPressedCtrl = FlyoutControl::None;
     bool flyoutTracking = false;
-    RECT flyoutActionRects[4]{};
+    FlyoutHitMap flyoutHitMap{};
     FlyoutAnimState flyoutAnim{};
 
     bool menuVisible = false;
     bool menuTracking = false;
-    bool menuOpenOnFlyoutMouseActivate = false;
-    bool suppressNextMoreBtnClick = false;
     bool submenuVisible = false;
     bool submenuTracking = false;
     UINT menuDpi = 96;

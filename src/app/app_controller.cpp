@@ -181,14 +181,14 @@ double ComputeNetLogPct(const SystemSnapshot& snap) {
 }
 
 double ComputeWindowPeak(const HistoryBuffer& history, const std::array<float, HistoryBuffer::kCapacity>& arr) {
-    constexpr size_t kWindow = 24;
+    constexpr size_t kWindow = 22;
     size_t n = std::min(history.count, kWindow);
     size_t start = history.count - n;
     double peak = 0.0;
     for (size_t i = 0; i < n; ++i) {
         peak = std::max(peak, static_cast<double>(history.GetOrdered(arr, start + i)));
     }
-    return std::clamp(peak * 1.35, 28.0, 100.0);
+    return std::clamp(peak * 1.35, 18.0, 100.0);
 }
 
 double ComputeFlyoutNetMax(const HistoryBuffer& history) {
@@ -207,6 +207,44 @@ bool AnyWidgetDragging(const AppState* app) {
         if (w.draggingOffset) return true;
     }
     return false;
+}
+
+void AdvanceFlyoutAnim(AppState* app, float dt, bool& outDirty) {
+    if (!app) return;
+    FlyoutAnimState& fa = app->flyoutAnim;
+
+    outDirty |= anim::Damp(fa.settingsSlide, app->flyoutSettingsPage ? 1.0f : 0.0f, 24.0f, dt, 0.002f);
+    outDirty |= anim::Damp(fa.sheetOpen, (app->flyoutSettingsPage && app->flyoutSheetOpen) ? 1.0f : 0.0f, 25.0f, dt, 0.002f);
+    float clampedTarget = std::clamp(app->flyoutSheetScrollTarget, 0.0f, app->flyoutHitMap.sheetMaxScrollDip);
+    app->flyoutSheetScrollTarget = clampedTarget;
+    outDirty |= anim::Damp(fa.sheetScrollY, clampedTarget, 26.0f, dt, 0.25f);
+
+    for (int i = 0; i < 4; ++i) {
+        float rowTarget = (!app->flyoutSettingsPage && app->flyoutHoverRow == i) ? 1.0f : 0.0f;
+        outDirty |= anim::Damp(fa.rowHover[i], rowTarget, 34.0f, dt);
+    }
+
+    constexpr int kCtrlCount = static_cast<int>(FlyoutControl::Count);
+    for (int i = 0; i < kCtrlCount; ++i) {
+        auto c = static_cast<FlyoutControl>(i);
+        outDirty |= anim::Damp(fa.ctrlHover[i], (app->flyoutHoverCtrl == c) ? 1.0f : 0.0f, 38.0f, dt);
+        outDirty |= anim::Damp(fa.ctrlPress[i], (app->flyoutPressedCtrl == c) ? 1.0f : 0.0f, 60.0f, dt);
+    }
+
+    const float tTargets[4] = {
+        app->cfg.showMiniBars ? 1.0f : 0.0f,
+        app->cfg.showGpuTemp ? 1.0f : 0.0f,
+        app->cfg.showGoldPrice ? 1.0f : 0.0f,
+        app->autoStartCached ? 1.0f : 0.0f,
+    };
+    if (!fa.togglesInitialized) {
+        for (int i = 0; i < 4; ++i) fa.togglePos[i] = tTargets[i];
+        fa.togglesInitialized = true;
+    } else {
+        for (int i = 0; i < 4; ++i) {
+            outDirty |= anim::Damp(fa.togglePos[i], tTargets[i], 30.0f, dt, 0.003f);
+        }
+    }
 }
 
 void AdvanceMenuPill(const FluentMenuSpec& spec, int hoverIdx, MenuAnimState& state, float dt, bool& outDirty) {
@@ -289,6 +327,10 @@ void StepAnimations(AppState* app) {
     const D2D1_COLOR_F targetRamCol = PickLoadColor(app->snap.ramPercent, pal, true);
     const D2D1_COLOR_F targetCpuTempCol = app->snap.hasCpuTemp ? PickTempColor(app->snap.cpuTempC, pal) : pal.label;
     const D2D1_COLOR_F targetGpuTempCol = app->snap.hasGpuTemp ? PickTempColor(app->snap.gpuTempC, pal) : pal.label;
+    const D2D1_COLOR_F targetCpuSigCol = PickSignalColor(app->snap.cpuPercent, pal.accentCpu, pal);
+    const D2D1_COLOR_F targetGpuSigCol = PickSignalColor(app->snap.gpuPercent, pal.accentGpu, pal);
+    const D2D1_COLOR_F targetVramSigCol = app->snap.hasVram ? PickSignalColor(app->snap.vramPercent, pal.accentVram, pal, true) : pal.muted;
+    const D2D1_COLOR_F targetRamSigCol = PickSignalColor(app->snap.ramPercent, pal.accentRam, pal, true);
 
     if (!app->anim.colorsInitialized ||
         app->anim.lastLightTheme != light ||
@@ -299,6 +341,10 @@ void StepAnimations(AppState* app) {
         app->anim.ramCol = targetRamCol;
         app->anim.cpuTempCol = targetCpuTempCol;
         app->anim.gpuTempCol = targetGpuTempCol;
+        app->anim.cpuSignalCol = targetCpuSigCol;
+        app->anim.gpuSignalCol = targetGpuSigCol;
+        app->anim.vramSignalCol = targetVramSigCol;
+        app->anim.ramSignalCol = targetRamSigCol;
         app->anim.lastLightTheme = light;
         app->anim.lastMinimalStyle = minimal;
         app->anim.colorsInitialized = true;
@@ -309,6 +355,10 @@ void StepAnimations(AppState* app) {
         metricsDirty |= anim::DampColor(app->anim.ramCol, targetRamCol, 18.0f, dt);
         metricsDirty |= anim::DampColor(app->anim.cpuTempCol, targetCpuTempCol, 18.0f, dt);
         metricsDirty |= anim::DampColor(app->anim.gpuTempCol, targetGpuTempCol, 18.0f, dt);
+        metricsDirty |= anim::DampColor(app->anim.cpuSignalCol, targetCpuSigCol, 18.0f, dt);
+        metricsDirty |= anim::DampColor(app->anim.gpuSignalCol, targetGpuSigCol, 18.0f, dt);
+        metricsDirty |= anim::DampColor(app->anim.vramSignalCol, targetVramSigCol, 18.0f, dt);
+        metricsDirty |= anim::DampColor(app->anim.ramSignalCol, targetRamSigCol, 18.0f, dt);
     }
     anyMoving |= metricsDirty;
 
@@ -343,12 +393,10 @@ void StepAnimations(AppState* app) {
     // Flyout
     if (app->flyoutVisible) {
         bool fDirty = metricsDirty;
-        for (int i = 0; i < 4; ++i) {
-            bool hMove = anim::Damp(app->flyoutAnim.btnHover[i], (app->flyoutHoverBtn == i) ? 1.0f : 0.0f, 38.0f, dt);
-            bool pMove = anim::Damp(app->flyoutAnim.btnPress[i], (app->flyoutPressedBtn == i) ? 1.0f : 0.0f, 60.0f, dt);
-            fDirty |= hMove || pMove;
-            anyMoving |= hMove || pMove;
-        }
+        bool fAnimMoving = false;
+        AdvanceFlyoutAnim(app, dt, fAnimMoving);
+        fDirty |= fAnimMoving;
+        anyMoving |= fAnimMoving;
         if (fDirty) {
             RenderAndPositionFlyout(app);
         }
@@ -534,10 +582,7 @@ void KickInteractiveAnimation(AppState* app, HWND focusHwnd) {
         if (dirty) RenderSubmenu(app);
     } else if (focusHwnd && focusHwnd == app->hwndFlyout && app->flyoutVisible) {
         bool dirty = false;
-        for (int i = 0; i < 4; ++i) {
-            dirty |= anim::Damp(app->flyoutAnim.btnHover[i], (app->flyoutHoverBtn == i) ? 1.0f : 0.0f, 38.0f, kKickDt);
-            dirty |= anim::Damp(app->flyoutAnim.btnPress[i], (app->flyoutPressedBtn == i) ? 1.0f : 0.0f, 60.0f, kKickDt);
-        }
+        AdvanceFlyoutAnim(app, kKickDt, dirty);
         if (dirty) RenderAndPositionFlyout(app);
     } else if (WidgetInstance* w = FindWidget(app, focusHwnd)) {
         if (w->visible && !w->fullscreenPaused) {
@@ -561,6 +606,10 @@ void SyncAnimatedMetricTargetsImmediate(AppState* app) {
     app->anim.ramCol = PickLoadColor(app->snap.ramPercent, pal, true);
     app->anim.cpuTempCol = app->snap.hasCpuTemp ? PickTempColor(app->snap.cpuTempC, pal) : pal.label;
     app->anim.gpuTempCol = app->snap.hasGpuTemp ? PickTempColor(app->snap.gpuTempC, pal) : pal.label;
+    app->anim.cpuSignalCol = PickSignalColor(app->snap.cpuPercent, pal.accentCpu, pal);
+    app->anim.gpuSignalCol = PickSignalColor(app->snap.gpuPercent, pal.accentGpu, pal);
+    app->anim.vramSignalCol = app->snap.hasVram ? PickSignalColor(app->snap.vramPercent, pal.accentVram, pal, true) : pal.muted;
+    app->anim.ramSignalCol = PickSignalColor(app->snap.ramPercent, pal.accentRam, pal, true);
     app->anim.lastLightTheme = light;
     app->anim.lastMinimalStyle = minimal;
     app->anim.colorsInitialized = true;
@@ -667,6 +716,10 @@ void ExecuteMenuCommand(AppState* app, UINT cmd) {
             break;
         case IDM_TOGGLE_AUTOSTART:
             SetAutoStartEnabled(!IsAutoStartEnabled());
+            app->autoStartCached = IsAutoStartEnabled();
+            if (app->flyoutVisible) {
+                RenderAndPositionFlyout(app);
+            }
             break;
         case IDM_EXIT:
             DestroyWindow(app->hwndHost);
@@ -702,6 +755,7 @@ int RunApplication(HINSTANCE hInstance) {
     if (!app.hIcon) app.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
     app.msgTaskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
     app.cfg = LoadConfig();
+    app.autoStartCached = IsAutoStartEnabled();
 
     int exitCode = 0;
     if (!app.renderer.Initialize()) {

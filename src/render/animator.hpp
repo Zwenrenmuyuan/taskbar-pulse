@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace anim {
 
@@ -95,14 +96,14 @@ struct AnimatedMetrics {
     double netLogPct = 0.0;
 
     // Smoothly damped chart vertical ceilings to avoid vertical snap on spikes
-    double cpuSparkCeil = 28.0;
-    double gpuSparkCeil = 28.0;
+    double cpuSparkCeil = 20.0;
+    double gpuSparkCeil = 20.0;
     double netFlyoutMax = 10240.0;
 
     // 1.0 right after a new sample arrives -> smoothly settles to 0.0 (horizontal glide)
     float historySlide = 0.0f;
 
-    // Smoothly interpolated semantic colors
+    // Smoothly interpolated text & signal colors
     bool colorsInitialized = false;
     bool lastLightTheme = true;
     bool lastMinimalStyle = false;
@@ -112,11 +113,69 @@ struct AnimatedMetrics {
     D2D1_COLOR_F ramCol{};
     D2D1_COLOR_F cpuTempCol{};
     D2D1_COLOR_F gpuTempCol{};
+    D2D1_COLOR_F cpuSignalCol{};
+    D2D1_COLOR_F gpuSignalCol{};
+    D2D1_COLOR_F vramSignalCol{};
+    D2D1_COLOR_F ramSignalCol{};
+};
+
+enum class FlyoutControl : int {
+    None = -1,
+    GearBtn = 0,
+    BackBtn = 1,
+    SegStyleMinimal = 2,
+    SegStyleCapsule = 3,
+    SegThemeAuto = 4,
+    SegThemeLight = 5,
+    SegThemeDark = 6,
+    SegRate500 = 7,
+    SegRate1000 = 8,
+    SegRate2000 = 9,
+    SegRow2Temp = 10,
+    SegRow2Freq = 11,
+    SegRow2Mem = 12,
+    SegRow2Hide = 13,
+    SegDisp0 = 14,
+    SegDisp1 = 15,
+    SegDisp2 = 16,
+    SegDisp3 = 17,
+    ToggleMiniBars = 18,
+    ToggleGpuTemp = 19,
+    ToggleGold = 20,
+    ToggleAutoStart = 21,
+    BtnResetPos = 22,
+    BtnExit = 23,
+    SheetCloseBtn = 24,
+    Count = 25,
+};
+
+struct FlyoutHitMap {
+    RECT controls[static_cast<int>(FlyoutControl::Count)]{};
+    RECT overviewRows[4]{}; // CPU, GPU, Mem, Net
+    RECT sheetCard{};
+    RECT sheetListViewport{};
+    std::vector<RECT> sheetItemRects;
+    float sheetMaxScrollDip = 0.0f;
 };
 
 struct FlyoutAnimState {
-    float btnHover[4]{};
-    float btnPress[4]{};
+    // 0.0 = Overview page, 1.0 = Settings page
+    float settingsSlide = 0.0f;
+
+    // 0.0 = closed, 1.0 = bottom display picker sheet open (4+ monitors)
+    float sheetOpen = 0.0f;
+    float sheetScrollY = 0.0f;
+
+    // Smooth hover wash for B1 overview rows (CPU, GPU, Mem, Net)
+    float rowHover[4]{};
+
+    // Smooth hover & press for interactive buttons/pills
+    float ctrlHover[static_cast<int>(FlyoutControl::Count)]{};
+    float ctrlPress[static_cast<int>(FlyoutControl::Count)]{};
+
+    // Smooth toggle switch thumb glide (MiniBars, GpuTemp, Gold, AutoStart)
+    float togglePos[4]{};
+    bool togglesInitialized = false;
 };
 
 struct MenuAnimState {

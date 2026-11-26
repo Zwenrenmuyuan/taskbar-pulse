@@ -44,9 +44,7 @@ int StepMenuFocus(const FluentMenuSpec& spec, int current, int dir) {
 FluentMenuSpec BuildMainMenuSpec(const AppConfig& cfg, bool flyoutVisible) {
     FluentMenuSpec spec;
     spec.cardWidthDip = 224.0f;
-    const wchar_t* barText = (cfg.style == VisualStyle::Capsule)
-        ? L"显示底部迷你进度条"
-        : L"显示背景微波形底纹";
+    const wchar_t* barText = L"显示底部状态微条";
 
     spec.items = {
         { IDM_OPEN_FLYOUT, false, false, false, MenuCheckStyle::None, false,

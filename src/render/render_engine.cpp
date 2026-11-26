@@ -62,11 +62,15 @@ RenderEngine::~RenderEngine() {
     ReleaseWicTarget(m_flyoutTarget);
     ReleaseWicTarget(m_widgetTarget);
     SafeRelease(m_fmtFlyBtn);
+    SafeRelease(m_fmtFlyBadge);
+    SafeRelease(m_fmtFlyUnit);
     SafeRelease(m_fmtFlyCardBig);
     SafeRelease(m_fmtFlyCardLabel);
+    SafeRelease(m_fmtFlyTiny);
     SafeRelease(m_fmtFlySub);
     SafeRelease(m_fmtFlyTitle);
     SafeRelease(m_fmtMenuText);
+    SafeRelease(m_fmtMinSubVal);
     SafeRelease(m_fmtMinSub);
     SafeRelease(m_fmtMinValue);
     SafeRelease(m_fmtMinLabel);
@@ -122,17 +126,21 @@ bool RenderEngine::Initialize() {
         return true;
     };
 
-    if (!makeFmt(10.5f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtLabel)) return false;
-    if (!makeFmt(11.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtValue)) return false;
+    if (!makeFmt(10.0f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtLabel)) return false;
+    if (!makeFmt(11.2f, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtValue)) return false;
     if (!makeFmt(9.75f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtMinLabel)) return false;
-    if (!makeFmt(11.0f, DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtMinValue)) return false;
-    if (!makeFmt(9.75f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtMinSub)) return false;
+    if (!makeFmt(11.2f, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtMinValue)) return false;
+    if (!makeFmt(9.6f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtMinSub)) return false;
+    if (!makeFmt(10.5f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtMinSubVal)) return false;
     if (!makeFmt(11.25f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtMenuText)) return false;
-    if (!makeFmt(13.5f, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtFlyTitle)) return false;
-    if (!makeFmt(10.5f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtFlySub)) return false;
+    if (!makeFmt(13.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtFlyTitle)) return false;
+    if (!makeFmt(11.25f, DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtFlySub)) return false;
+    if (!makeFmt(10.25f, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtFlyTiny)) return false;
     if (!makeFmt(11.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtFlyCardLabel)) return false;
-    if (!makeFmt(18.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtFlyCardBig)) return false;
-    if (!makeFmt(11.0f, DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtFlyBtn)) return false;
+    if (!makeFmt(21.5f, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtFlyCardBig)) return false;
+    if (!makeFmt(11.5f, DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtFlyUnit)) return false;
+    if (!makeFmt(10.25f, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtFlyBadge)) return false;
+    if (!makeFmt(10.75f, DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtFlyBtn)) return false;
 
     // Eagerly initialize DirectComposition so popup windows can opt into WS_EX_NOREDIRECTIONBITMAP.
     EnsureDCompDevice();

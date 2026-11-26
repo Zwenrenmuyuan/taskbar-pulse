@@ -53,20 +53,20 @@ void RenderEngine::DrawMenuContent(
     rt->GetTransform(&prevTransform);
     rt->SetTransform(D2D1::Matrix3x2F::Translation(padX, padTop) * prevTransform);
 
-    const D2D1_COLOR_F hoverCol = light ? Rgba(15, 23, 42, 0.062f) : Rgba(255, 255, 255, 0.095f);
-    const D2D1_COLOR_F activeSubCol = light ? Rgba(15, 23, 42, 0.042f) : Rgba(255, 255, 255, 0.055f);
-    const D2D1_COLOR_F dangerHoverCol = light ? Rgba(185, 28, 28, 0.09f) : Rgba(248, 113, 113, 0.15f);
-    const D2D1_COLOR_F checkCol = light ? Rgba(15, 118, 110, 1.0f) : Rgba(110, 231, 192, 1.0f);
+    const D2D1_COLOR_F hoverCol = light ? Rgba(20, 20, 24, 0.056f) : Rgba(255, 255, 255, 0.088f);
+    const D2D1_COLOR_F activeSubCol = light ? Rgba(20, 20, 24, 0.036f) : Rgba(255, 255, 255, 0.050f);
+    const D2D1_COLOR_F dangerHoverCol = light ? pal.badgeHotBg : pal.badgeHotBg;
+    const D2D1_COLOR_F checkCol = pal.accentCpu;
 
-    D2D1_ROUNDED_RECT outer = D2D1::RoundedRect(D2D1::RectF(0.5f, 0.5f, innerW - 0.5f, innerH - 0.5f), 10.0f, 10.0f);
+    D2D1_ROUNDED_RECT outer = D2D1::RoundedRect(D2D1::RectF(0.5f, 0.5f, innerW - 0.5f, innerH - 0.5f), 11.0f, 11.0f);
     brMain->SetColor(pal.flyBg);
     rt->FillRoundedRectangle(&outer, brMain);
     brMain->SetColor(pal.flyBorder);
     rt->DrawRoundedRectangle(&outer, brMain, 1.0f);
 
     // Subtle top bevel highlight
-    brMain->SetColor(light ? Rgba(255, 255, 255, 0.65f) : Rgba(255, 255, 255, 0.08f));
-    rt->DrawLine(D2D1::Point2F(11.0f, 1.5f), D2D1::Point2F(innerW - 11.0f, 1.5f), brMain, 1.0f);
+    brMain->SetColor(pal.flyHighlight);
+    rt->DrawLine(D2D1::Point2F(12.0f, 1.5f), D2D1::Point2F(innerW - 12.0f, 1.5f), brMain, 1.0f);
 
     // First draw static highlight under an open submenu's parent row if pointer is elsewhere
     if (openSubIndex >= 0 && openSubIndex < static_cast<int>(spec.items.size()) &&

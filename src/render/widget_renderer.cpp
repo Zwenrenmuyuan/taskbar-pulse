@@ -9,12 +9,12 @@
 WidgetDimensions RenderEngine::MeasureWidget(const AppConfig& cfg, float maxHeightDip) const {
     float h = std::clamp(maxHeightDip, 28.0f, 40.0f);
     if (cfg.style == VisualStyle::Capsule) {
-        float w = 348.0f;
-        if (cfg.showGoldPrice) w += 90.0f;
+        float w = 356.0f;
+        if (cfg.showGoldPrice) w += 82.0f;
         return { w, h };
     }
-    float w = 356.0f;
-    if (cfg.showGoldPrice) w += 78.0f;
+    float w = 362.0f;
+    if (cfg.showGoldPrice) w += 82.0f;
     return { w, h };
 }
 
@@ -30,13 +30,15 @@ void RenderEngine::DrawWidgetContent(
     const AnimatedMetrics& anim,
     float hoverProgress,
     float pressProgress) {
+    (void)history;
     const bool light = ResolveEffectiveLightTheme(cfg);
     const bool capsule = (cfg.style == VisualStyle::Capsule);
     const Palette pal = MakePalette(light, !capsule);
-    const bool showBars = cfg.showMiniBars && capsule;
-    const bool showSpark = cfg.showMiniBars && !capsule;
+    const bool showBars = cfg.showMiniBars;
+
     IDWriteTextFormat* fmtLabel = capsule ? m_fmtLabel : m_fmtMinLabel;
     IDWriteTextFormat* fmtValue = capsule ? m_fmtValue : m_fmtMinValue;
+    IDWriteTextFormat* fmtSubVal = m_fmtMinSubVal;
 
     const float hoverT = std::clamp(hoverProgress, 0.0f, 1.0f);
     const float pressT = std::clamp(pressProgress, 0.0f, 1.0f);
@@ -48,71 +50,90 @@ void RenderEngine::DrawWidgetContent(
         D2D1_COLOR_F bgCol = anim::LerpColor(pal.capsuleBg, pal.capsuleBgHover, hoverT);
         bgCol = anim::LerpColor(bgCol, pal.capsuleBgPressed, pressT);
 
-        D2D1_COLOR_F borderHover = light ? Rgba(15, 23, 42, 0.14f) : Rgba(255, 255, 255, 0.18f);
+        D2D1_COLOR_F borderHover = light ? Rgba(20, 20, 24, 0.14f) : Rgba(255, 255, 255, 0.18f);
         D2D1_COLOR_F borderCol = anim::LerpColor(pal.capsuleBorder, borderHover, std::max(hoverT, pressT));
 
-        D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(D2D1::RectF(0.5f, 0.5f, dim.widthDip - 0.5f, dim.heightDip - 0.5f), 8.0f, 8.0f);
+        D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(D2D1::RectF(0.5f, 0.5f, dim.widthDip - 0.5f, dim.heightDip - 0.5f), 8.5f, 8.5f);
         brMain->SetColor(bgCol);
         rt->FillRoundedRectangle(&rr, brMain);
         brMain->SetColor(borderCol);
         rt->DrawRoundedRectangle(&rr, brMain, 1.0f);
 
-        // Subtle top glass edge highlight
+        // Subtle top glass bevel
         brMain->SetColor(pal.capsuleHighlight);
-        rt->DrawLine(D2D1::Point2F(9.0f, 1.5f), D2D1::Point2F(dim.widthDip - 9.0f, 1.5f), brMain, 1.0f);
+        rt->DrawLine(D2D1::Point2F(10.0f, 1.5f), D2D1::Point2F(dim.widthDip - 10.0f, 1.5f), brMain, 1.0f);
 
         // Column dividers
         brMain->SetColor(pal.divider);
-        float divX[] = { 91.5f, 172.5f, 267.5f };
+        float divX[] = { 89.5f, 169.5f, 276.5f };
         for (float dx : divX) {
-            rt->DrawLine(D2D1::Point2F(dx, 7.0f), D2D1::Point2F(dx, dim.heightDip - 7.0f), brMain, 1.0f);
+            rt->DrawLine(D2D1::Point2F(dx, 8.0f), D2D1::Point2F(dx, dim.heightDip - 8.0f), brMain, 1.0f);
         }
         if (cfg.showGoldPrice) {
-            rt->DrawLine(D2D1::Point2F(343.5f, 7.0f), D2D1::Point2F(343.5f, dim.heightDip - 7.0f), brMain, 1.0f);
+            rt->DrawLine(D2D1::Point2F(352.5f, 8.0f), D2D1::Point2F(352.5f, dim.heightDip - 8.0f), brMain, 1.0f);
         }
     } else {
         float pillT = std::max(hoverT, pressT);
         if (pillT > 0.005f) {
-            // Smooth Fluent hover/press pill during pointer interaction
-            D2D1_COLOR_F hoverBg = light ? Rgba(255, 255, 255, 0.62f) : Rgba(255, 255, 255, 0.068f);
-            D2D1_COLOR_F pressBg = light ? Rgba(255, 255, 255, 0.80f) : Rgba(255, 255, 255, 0.11f);
+            // Smooth Fluent hover/press wash during pointer interaction
+            D2D1_COLOR_F hoverBg = light ? Rgba(255, 255, 255, 0.64f) : Rgba(255, 255, 255, 0.072f);
+            D2D1_COLOR_F pressBg = light ? Rgba(255, 255, 255, 0.82f) : Rgba(255, 255, 255, 0.115f);
             D2D1_COLOR_F hc = anim::LerpColor(hoverBg, pressBg, pressT);
             hc.a *= pillT;
 
-            D2D1_COLOR_F bc = light ? Rgba(15, 23, 42, 0.075f) : Rgba(255, 255, 255, 0.095f);
+            D2D1_COLOR_F bc = light ? Rgba(20, 20, 24, 0.068f) : Rgba(255, 255, 255, 0.09f);
             bc.a *= pillT;
 
-            D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(D2D1::RectF(0.5f, 1.0f, dim.widthDip - 0.5f, dim.heightDip - 1.0f), 6.0f, 6.0f);
+            D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(D2D1::RectF(0.5f, 1.0f, dim.widthDip - 0.5f, dim.heightDip - 1.0f), 7.0f, 7.0f);
             brMain->SetColor(hc);
             rt->FillRoundedRectangle(&rr, brMain);
             brMain->SetColor(bc);
             rt->DrawRoundedRectangle(&rr, brMain, 1.0f);
         }
+
+        // T1-Pro: whisper-quiet short hairline dividers separating each metric group
+        brMain->SetColor(pal.divider);
+        float divX[] = { 86.5f, 167.5f, 280.5f };
+        for (float dx : divX) {
+            rt->DrawLine(D2D1::Point2F(dx, 9.0f), D2D1::Point2F(dx, dim.heightDip - 9.0f), brMain, 1.0f);
+        }
+        if (cfg.showGoldPrice) {
+            rt->DrawLine(D2D1::Point2F(361.5f, 9.0f), D2D1::Point2F(361.5f, dim.heightDip - 9.0f), brMain, 1.0f);
+        }
     }
 
-    // Column geometry
+    // Column geometry (T1-Pro frameless & refreshed Capsule)
     struct ColBox { float x; float w; };
     ColBox cols[4] = {
-        capsule ? ColBox{ 10.0f, 76.0f } : ColBox{ 6.0f, 72.0f },
-        capsule ? ColBox{ 97.0f, 70.0f } : ColBox{ 90.0f, 66.0f },
-        capsule ? ColBox{ 178.0f, 84.0f } : ColBox{ 168.0f, 102.0f },
-        capsule ? ColBox{ 273.0f, 65.0f } : ColBox{ 282.0f, 68.0f },
+        capsule ? ColBox{ 10.0f, 74.0f } : ColBox{ 6.0f, 74.0f },
+        capsule ? ColBox{ 96.0f, 68.0f } : ColBox{ 93.0f, 68.0f },
+        capsule ? ColBox{ 176.0f, 94.0f } : ColBox{ 174.0f, 100.0f },
+        capsule ? ColBox{ 283.0f, 64.0f } : ColBox{ 287.0f, 68.0f },
     };
 
-    float yRow1 = showBars ? 3.5f : 4.5f;
-    float yRow2 = showBars ? 18.0f : 20.5f;
-    float rowH = 14.5f;
-    float yCenter = (dim.heightDip - rowH) * 0.5f;
-    float yBar = 34.5f;
-    float barH = 2.2f;
-    float sparkTop = std::min(13.5f, dim.heightDip * 0.35f);
-    float sparkBot = std::max(sparkTop + 6.0f, dim.heightDip - 3.5f);
+    const float rowH = 14.0f;
+    const float yRow1 = showBars ? 3.5f : 5.0f;
+    const float yRow2 = showBars ? 18.5f : 20.5f;
+    const float yCenter = (dim.heightDip - rowH) * 0.5f;
+    const float barH = capsule ? 2.0f : 1.8f;
+    const float yBar = dim.heightDip - barH - (capsule ? 2.8f : 2.2f);
 
     const double dispCpuPct = anim.initialized ? anim.cpuPct : snap.cpuPercent;
     const double dispGpuPct = anim.initialized ? anim.gpuPct : (snap.hasGpuUsage ? snap.gpuPercent : 0.0);
     const double dispVramPct = anim.initialized ? anim.vramPct : (snap.hasVram ? snap.vramPercent : 0.0);
     const double dispRamPct = anim.initialized ? anim.ramPct : snap.ramPercent;
-    const float slideOffset = anim.historySlide;
+
+    // Quiet neutral micro-bar fill for T1-Pro normal load (elevates to warn/hot on high load)
+    auto pickTaskbarBarColor = [&](double pct, const D2D1_COLOR_F& capsuleSignal, bool memStyle = false) -> D2D1_COLOR_F {
+        double hotThresh = memStyle ? 90.0 : 88.0;
+        double warnThresh = memStyle ? 78.0 : 70.0;
+        if (pct >= hotThresh) return pal.hot;
+        if (pct >= warnThresh) return pal.warn;
+        if (capsule) return capsuleSignal;
+        D2D1_COLOR_F quiet = pal.muted;
+        quiet.a = light ? 0.50f : 0.55f;
+        return quiet;
+    };
 
     wchar_t valBuf[48]{};
 
@@ -120,12 +141,6 @@ void RenderEngine::DrawWidgetContent(
     {
         const auto& c = cols[0];
         D2D1_COLOR_F cpuCol = useAnimColors ? anim.cpuCol : PickLoadColor(snap.cpuPercent, pal);
-        if (showSpark) {
-            DrawMicroSparkBg(rt, m_d2dFactory, m_roundStroke, brMain,
-                D2D1::RectF(c.x, sparkTop, c.x + c.w, sparkBot),
-                history.count, [&](size_t i) { return history.GetOrdered(history.cpu, i); },
-                28.0, 100.0, cpuCol, light, false, slideOffset, anim.initialized ? anim.cpuSparkCeil : 0.0);
-        }
 
         bool hasRow2 = (cfg.row2Col1 != Row2Col1Mode::Hide);
         float r1y = hasRow2 ? yRow1 : (showBars ? 9.5f : yCenter);
@@ -143,8 +158,8 @@ void RenderEngine::DrawWidgetContent(
             } else {
                 wcscpy_s(valBuf, L"--");
             }
-            brMain->SetColor(pal.freq);
-            DrawTextFormatted(rt, valBuf, fmtValue, D2D1::RectF(c.x, yRow2, c.x + c.w, yRow2 + rowH), brMain, true);
+            brMain->SetColor(pal.label);
+            DrawTextFormatted(rt, valBuf, fmtSubVal, D2D1::RectF(c.x, yRow2, c.x + c.w, yRow2 + rowH), brMain, true);
         } else if (cfg.row2Col1 == Row2Col1Mode::CpuTemp) {
             DrawTextFormatted(rt, L"温度", fmtLabel, D2D1::RectF(c.x, yRow2, c.x + c.w, yRow2 + rowH), brAux, false);
             if (snap.hasCpuTemp) {
@@ -156,18 +171,18 @@ void RenderEngine::DrawWidgetContent(
                 ? (useAnimColors ? anim.cpuTempCol : PickTempColor(snap.cpuTempC, pal))
                 : pal.label;
             brMain->SetColor(tempCol);
-            DrawTextFormatted(rt, valBuf, fmtValue, D2D1::RectF(c.x, yRow2, c.x + c.w, yRow2 + rowH), brMain, true);
+            DrawTextFormatted(rt, valBuf, fmtSubVal, D2D1::RectF(c.x, yRow2, c.x + c.w, yRow2 + rowH), brMain, true);
         } else if (cfg.row2Col1 == Row2Col1Mode::MemPct) {
             DrawTextFormatted(rt, L"占存", fmtLabel, D2D1::RectF(c.x, yRow2, c.x + c.w, yRow2 + rowH), brAux, false);
             _snwprintf_s(valBuf, _countof(valBuf), _TRUNCATE, L"%.1f%%", snap.ramPercent);
             brMain->SetColor(useAnimColors ? anim.ramCol : PickLoadColor(snap.ramPercent, pal, true));
-            DrawTextFormatted(rt, valBuf, fmtValue, D2D1::RectF(c.x, yRow2, c.x + c.w, yRow2 + rowH), brMain, true);
+            DrawTextFormatted(rt, valBuf, fmtSubVal, D2D1::RectF(c.x, yRow2, c.x + c.w, yRow2 + rowH), brMain, true);
         }
 
         if (showBars) {
             brAux->SetColor(pal.trackBg);
-            brMain->SetColor(cpuCol);
-            DrawMiniBar(rt, c.x, yBar, c.w, barH, dispCpuPct, brAux, brMain);
+            brMain->SetColor(pickTaskbarBarColor(snap.cpuPercent, useAnimColors ? anim.cpuSignalCol : pal.accentCpu));
+            DrawMiniBar(rt, c.x, yBar, c.w, barH, std::max(4.0, dispCpuPct), brAux, brMain);
         }
     }
 
@@ -175,12 +190,6 @@ void RenderEngine::DrawWidgetContent(
     {
         const auto& c = cols[1];
         D2D1_COLOR_F gpuCol = useAnimColors ? anim.gpuCol : PickLoadColor(snap.gpuPercent, pal);
-        if (showSpark && snap.hasGpuUsage) {
-            DrawMicroSparkBg(rt, m_d2dFactory, m_roundStroke, brMain,
-                D2D1::RectF(c.x, sparkTop, c.x + c.w, sparkBot),
-                history.count, [&](size_t i) { return history.GetOrdered(history.gpu, i); },
-                28.0, 100.0, gpuCol, light, false, slideOffset, anim.initialized ? anim.gpuSparkCeil : 0.0);
-        }
 
         bool hasTemp = cfg.showGpuTemp && snap.hasGpuTemp;
         float r1y = hasTemp ? yRow1 : (showBars ? 9.5f : yCenter);
@@ -199,13 +208,13 @@ void RenderEngine::DrawWidgetContent(
             DrawTextFormatted(rt, L"温度", fmtLabel, D2D1::RectF(c.x, yRow2, c.x + c.w, yRow2 + rowH), brAux, false);
             _snwprintf_s(valBuf, _countof(valBuf), _TRUNCATE, L"%.0f°C", snap.gpuTempC);
             brMain->SetColor(useAnimColors ? anim.gpuTempCol : PickTempColor(snap.gpuTempC, pal));
-            DrawTextFormatted(rt, valBuf, fmtValue, D2D1::RectF(c.x, yRow2, c.x + c.w, yRow2 + rowH), brMain, true);
+            DrawTextFormatted(rt, valBuf, fmtSubVal, D2D1::RectF(c.x, yRow2, c.x + c.w, yRow2 + rowH), brMain, true);
         }
 
         if (showBars) {
             brAux->SetColor(pal.trackBg);
-            brMain->SetColor(gpuCol);
-            DrawMiniBar(rt, c.x, yBar, c.w, barH, snap.hasGpuUsage ? dispGpuPct : 0.0, brAux, brMain);
+            brMain->SetColor(pickTaskbarBarColor(snap.gpuPercent, useAnimColors ? anim.gpuSignalCol : pal.accentGpu));
+            DrawMiniBar(rt, c.x, yBar, c.w, barH, snap.hasGpuUsage ? std::max(4.0, dispGpuPct) : 0.0, brAux, brMain);
         }
     }
 
@@ -225,12 +234,6 @@ void RenderEngine::DrawWidgetContent(
                 DrawTextFormatted(rt, L"--", fmtValue, D2D1::RectF(c.x, rowY, c.x + c.w, rowY + rowH), brMain, true);
                 return;
             }
-            if (capsule) {
-                _snwprintf_s(valBuf, _countof(valBuf), _TRUNCATE, L"%.1fGB", usedGb);
-                brMain->SetColor(col);
-                DrawTextFormatted(rt, valBuf, fmtValue, D2D1::RectF(c.x, rowY, c.x + c.w, rowY + rowH), brMain, true);
-                return;
-            }
             wchar_t pctBuf[16]{};
             _snwprintf_s(pctBuf, _countof(pctBuf), _TRUNCATE, L"%.0f%%", pct);
             float pctW = MeasureTextWidth(pctBuf, fmtValue, true);
@@ -247,12 +250,12 @@ void RenderEngine::DrawWidgetContent(
         drawDualMemRow(yRow1, L"显存", snap.hasVram, snap.vramUsedGb, snap.vramPercent, vramCol);
         drawDualMemRow(yRow2, L"内存", true, snap.ramUsedGb, snap.ramPercent, ramCol);
 
-        if (showBars) {
+        if (showBars && capsule) {
             float halfW = (c.w - 4.0f) * 0.5f;
             brAux->SetColor(pal.trackBg);
-            brMain->SetColor(vramCol);
+            brMain->SetColor(pickTaskbarBarColor(snap.vramPercent, useAnimColors ? anim.vramSignalCol : pal.accentVram, true));
             DrawMiniBar(rt, c.x, yBar, halfW, barH, snap.hasVram ? dispVramPct : 0.0, brAux, brMain);
-            brMain->SetColor(ramCol);
+            brMain->SetColor(pickTaskbarBarColor(snap.ramPercent, useAnimColors ? anim.ramSignalCol : pal.accentRam, true));
             DrawMiniBar(rt, c.x + halfW + 4.0f, yBar, halfW, barH, dispRamPct, brAux, brMain);
         }
     }
@@ -260,37 +263,29 @@ void RenderEngine::DrawWidgetContent(
     // ---- Col 4: Network Up & Down ----
     {
         const auto& c = cols[3];
-        if (showSpark) {
-            auto netNorm = [&](size_t i) -> float {
-                double bps = std::max(history.GetOrdered(history.netDown, i), history.GetOrdered(history.netUp, i));
-                if (bps <= 512.0) return 0.02f;
-                return static_cast<float>(std::clamp(std::log10(bps / 512.0) / 5.3, 0.03, 1.0));
-            };
-            D2D1_COLOR_F netSparkCol = (snap.netUpBps > snap.netDownBps) ? pal.netUp : pal.netDown;
-            DrawMicroSparkBg(rt, m_d2dFactory, m_roundStroke, brMain,
-                D2D1::RectF(c.x, sparkTop, c.x + c.w, sparkBot),
-                history.count, netNorm, 1.0, 1.0, netSparkCol, light, true, slideOffset);
-        }
+        float arrowX = c.x + 3.5f;
 
-        float arrowX = c.x + 4.0f;
-
-        bool upActive = snap.netUpBps >= 1024.0;
-        brMain->SetColor(upActive ? pal.netUp : pal.netIdle);
+        // Upload row: quiet neutral secondary weight (arrow lights up subtly under real traffic)
+        bool upHigh = snap.netUpBps >= 20480.0;
+        brMain->SetColor(upHigh ? pal.netUp : pal.label);
         DrawVectorArrow(rt, m_roundStroke, arrowX, yRow1 + rowH * 0.5f, true, brMain);
         FormatSpeedCompact(snap.netUpBps, valBuf, _countof(valBuf), false);
-        DrawTextFormatted(rt, valBuf, fmtValue, D2D1::RectF(c.x + 10.0f, yRow1, c.x + c.w, yRow1 + rowH), brMain, true);
+        D2D1_COLOR_F upTxt = pal.labelStrong;
+        upTxt.a = light ? 0.80f : 0.82f;
+        brMain->SetColor(upTxt);
+        DrawTextFormatted(rt, valBuf, fmtSubVal, D2D1::RectF(c.x + 10.0f, yRow1, c.x + c.w, yRow1 + rowH), brMain, true);
 
-        bool downActive = snap.netDownBps >= 1024.0;
-        brMain->SetColor(downActive ? pal.netDown : pal.netIdle);
+        // Download row: primary ink weight
+        bool downHigh = snap.netDownBps >= 20480.0;
+        brMain->SetColor(downHigh ? pal.netDown : pal.label);
         DrawVectorArrow(rt, m_roundStroke, arrowX, yRow2 + rowH * 0.5f, false, brMain);
         FormatSpeedCompact(snap.netDownBps, valBuf, _countof(valBuf), false);
+        brMain->SetColor(pal.labelStrong);
         DrawTextFormatted(rt, valBuf, fmtValue, D2D1::RectF(c.x + 10.0f, yRow2, c.x + c.w, yRow2 + rowH), brMain, true);
 
-        if (showBars) {
-            double logPct = 0.0;
-            if (anim.initialized) {
-                logPct = anim.netLogPct;
-            } else {
+        if (showBars && capsule) {
+            double logPct = anim.initialized ? anim.netLogPct : 0.0;
+            if (!anim.initialized) {
                 double peakBps = std::max(snap.netDownBps, snap.netUpBps);
                 if (peakBps > 512.0) {
                     logPct = std::clamp((std::log10(peakBps / 512.0) / 5.3) * 100.0, 4.0, 100.0);
@@ -302,17 +297,36 @@ void RenderEngine::DrawWidgetContent(
         }
     }
 
-    // ---- Col 5: International gold, CNY per gram ----
+    // ---- Col 5: International gold, CNY per gram (harmonized 2-row T1-Pro grammar) ----
     if (cfg.showGoldPrice) {
-        float x = capsule ? 349.0f : 362.0f;
-        float w = capsule ? 78.0f : 66.0f;
-        const wchar_t* label = gold.cnyPerGram > 0.0 && !gold.fetchSucceeded ? L"金价·未更新" : L"金价·元/克";
+        float x = capsule ? 359.0f : 368.0f;
+        float w = 70.0f;
+
+        // Row 1: "金价" (muted left) + primary neutral price "771.0" (bold right, matching CPU/GPU/VRAM baseline)
         brAux->SetColor(pal.label);
-        DrawTextFormatted(rt, label, fmtLabel, D2D1::RectF(x, yRow1, x + w, yRow1 + rowH), brAux, false);
-        if (gold.cnyPerGram > 0.0) _snwprintf_s(valBuf, _countof(valBuf), _TRUNCATE, L"%.2f", gold.cnyPerGram);
-        else wcscpy_s(valBuf, L"--");
-        brMain->SetColor(gold.fetchSucceeded ? (light ? Rgba(154, 101, 0) : Rgba(246, 201, 92)) : pal.label);
-        DrawTextFormatted(rt, valBuf, fmtValue, D2D1::RectF(x, yRow2, x + w, yRow2 + rowH), brMain, true);
+        DrawTextFormatted(rt, L"金价", fmtLabel, D2D1::RectF(x, yRow1, x + 26.0f, yRow1 + rowH), brAux, false);
+        if (gold.cnyPerGram > 0.0) {
+            _snwprintf_s(valBuf, _countof(valBuf), _TRUNCATE, L"%.1f", gold.cnyPerGram);
+        } else {
+            wcscpy_s(valBuf, L"--");
+        }
+        brMain->SetColor(gold.cnyPerGram > 0.0 ? pal.labelStrong : pal.label);
+        DrawTextFormatted(rt, valBuf, fmtValue, D2D1::RectF(x + 24.0f, yRow1, x + w, yRow1 + rowH), brMain, true);
+
+        // Row 2: "元/克" (muted left) + fresh quote time "11:05" (or "待更新") right, eliminating bottom-left void
+        brAux->SetColor(pal.label);
+        DrawTextFormatted(rt, L"元/克", fmtLabel, D2D1::RectF(x, yRow2, x + 32.0f, yRow2 + rowH), brAux, false);
+        if (gold.cnyPerGram > 0.0 && gold.fetchSucceeded && gold.updatedLocal.wYear > 0) {
+            _snwprintf_s(valBuf, _countof(valBuf), _TRUNCATE, L"%02u:%02u",
+                static_cast<unsigned>(gold.updatedLocal.wHour),
+                static_cast<unsigned>(gold.updatedLocal.wMinute));
+        } else if (gold.cnyPerGram > 0.0 && !gold.fetchSucceeded) {
+            wcscpy_s(valBuf, L"待更新");
+        } else {
+            wcscpy_s(valBuf, L"--");
+        }
+        brMain->SetColor(pal.label);
+        DrawTextFormatted(rt, valBuf, fmtSubVal, D2D1::RectF(x + 30.0f, yRow2, x + w, yRow2 + rowH), brMain, true);
     }
 }
 
