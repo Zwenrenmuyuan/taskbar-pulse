@@ -1,21 +1,18 @@
 #include "render/draw_primitives.hpp"
 
-void DrawVectorArrow(ID2D1RenderTarget* rt, ID2D1Factory* factory, float cx, float cy, bool up, ID2D1Brush* brush) {
-    ID2D1StrokeStyle* style = CreateRoundStrokeStyle(factory);
-
+void DrawVectorArrow(ID2D1RenderTarget* rt, ID2D1StrokeStyle* roundStroke, float cx, float cy, bool up, ID2D1Brush* brush) {
     float halfH = 3.6f;
     float headW = 2.6f;
     float headH = 2.5f;
     if (up) {
-        rt->DrawLine(D2D1::Point2F(cx, cy + halfH), D2D1::Point2F(cx, cy - halfH), brush, 1.35f, style);
-        rt->DrawLine(D2D1::Point2F(cx - headW, cy - halfH + headH), D2D1::Point2F(cx, cy - halfH), brush, 1.35f, style);
-        rt->DrawLine(D2D1::Point2F(cx + headW, cy - halfH + headH), D2D1::Point2F(cx, cy - halfH), brush, 1.35f, style);
+        rt->DrawLine(D2D1::Point2F(cx, cy + halfH), D2D1::Point2F(cx, cy - halfH), brush, 1.35f, roundStroke);
+        rt->DrawLine(D2D1::Point2F(cx - headW, cy - halfH + headH), D2D1::Point2F(cx, cy - halfH), brush, 1.35f, roundStroke);
+        rt->DrawLine(D2D1::Point2F(cx + headW, cy - halfH + headH), D2D1::Point2F(cx, cy - halfH), brush, 1.35f, roundStroke);
     } else {
-        rt->DrawLine(D2D1::Point2F(cx, cy - halfH), D2D1::Point2F(cx, cy + halfH), brush, 1.35f, style);
-        rt->DrawLine(D2D1::Point2F(cx - headW, cy + halfH - headH), D2D1::Point2F(cx, cy + halfH), brush, 1.35f, style);
-        rt->DrawLine(D2D1::Point2F(cx + headW, cy + halfH - headH), D2D1::Point2F(cx, cy + halfH), brush, 1.35f, style);
+        rt->DrawLine(D2D1::Point2F(cx, cy - halfH), D2D1::Point2F(cx, cy + halfH), brush, 1.35f, roundStroke);
+        rt->DrawLine(D2D1::Point2F(cx - headW, cy + halfH - headH), D2D1::Point2F(cx, cy + halfH), brush, 1.35f, roundStroke);
+        rt->DrawLine(D2D1::Point2F(cx + headW, cy + halfH - headH), D2D1::Point2F(cx, cy + halfH), brush, 1.35f, roundStroke);
     }
-    SafeRelease(style);
 }
 
 void DrawMiniBar(
@@ -78,14 +75,14 @@ bool PresentWicToWindow(HWND hwnd, POINT ptScreen, IWICBitmap* wicBmp, int wPx, 
 
 void DrawCardShadow(
     ID2D1RenderTarget* rt,
+    ID2D1SolidColorBrush* brShadow,
     float padX,
     float padTop,
     float innerW,
     float innerH,
     float cornerR,
     bool light) {
-    ID2D1SolidColorBrush* brShadow = nullptr;
-    if (FAILED(rt->CreateSolidColorBrush(Rgba(0, 0, 0, 0.05f), &brShadow)) || !brShadow) return;
+    if (!brShadow) return;
     for (int s = 5; s >= 1; --s) {
         float ex = static_cast<float>(s);
         float alpha = (light ? 0.042f : 0.11f) * (1.0f - static_cast<float>(s - 1) / 5.5f);
@@ -95,7 +92,6 @@ void DrawCardShadow(
             cornerR + ex * 0.5f, cornerR + ex * 0.5f);
         rt->FillRoundedRectangle(&sr, brShadow);
     }
-    brShadow->Release();
 }
 
 ID2D1StrokeStyle* CreateRoundStrokeStyle(ID2D1Factory* factory) {

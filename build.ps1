@@ -50,6 +50,7 @@ $libs = @(
     "-ldwrite",
     "-ld3d11",
     "-ldcomp",
+    "-ldwmapi",
     "-lwindowscodecs",
     "-liphlpapi",
     "-lpowrprof",

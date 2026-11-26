@@ -8,6 +8,15 @@
 
 namespace {
 
+void SetClickThrough(HWND hwnd, bool enabled) {
+    if (!hwnd) return;
+    LONG_PTR ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+    LONG_PTR next = enabled ? (ex | WS_EX_TRANSPARENT) : (ex & ~WS_EX_TRANSPARENT);
+    if (next != ex) {
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, next);
+    }
+}
+
 int HitTestMenuItem(const std::vector<RECT>& rects, POINT pt) {
     for (size_t i = 0; i < rects.size(); ++i) {
         if (!IsRectEmpty(&rects[i]) && PtInRect(&rects[i], pt)) {
@@ -93,7 +102,7 @@ FluentMenuSpec BuildSubmenuSpec(AppState* app, UINT subId) {
             { IDM_RATE_2000, false, false, false, MenuCheckStyle::Radio, cfg.refreshMs == 2000, L"2.0 秒（极省电）" },
         };
     } else if (subId == kSubDisplay) {
-        app->host.RefreshHandles(true);
+        app->host.RefreshHandles(false);
         app->menuDisplayDevices.clear();
 
         auto formatMonitorDetail = [](const TaskbarInfo& tb) -> std::wstring {
@@ -174,48 +183,121 @@ void RenderMainMenu(AppState* app) {
     if (!app->menuVisible || !app->hwndMenu) return;
     app->renderer.RenderMenuToWindow(
         app->hwndMenu, app->menuWinPos, app->menuDpi, app->cfg, app->menuSpec,
-        app->menuHoverIdx, app->openSubIdx, false, app->menuItemRects);
+        app->menuHoverIdx, app->openSubIdx, app->menuAnim, false, app->menuItemRects);
 }
 
 void RenderSubmenu(AppState* app) {
     if (!app->submenuVisible || !app->hwndSubmenu) return;
     app->renderer.RenderMenuToWindow(
         app->hwndSubmenu, app->submenuWinPos, app->menuDpi, app->cfg, app->submenuSpec,
-        app->submenuHoverIdx, -1, true, app->submenuItemRects);
+        app->submenuHoverIdx, -1, app->submenuAnim, true, app->submenuItemRects);
 }
 
-void HideSubmenu(AppState* app) {
+void HideSubmenu(AppState* app, bool animate) {
     if (app->hwndMenu) {
         KillTimer(app->hwndMenu, kTimerSubOpenId);
         KillTimer(app->hwndMenu, kTimerSubCloseId);
     }
     app->pendingSubIdx = -1;
     bool wasOpen = app->submenuVisible || app->openSubIdx != -1;
+    bool wasVis = app->submenuVisible;
     app->submenuVisible = false;
     app->submenuHoverIdx = -1;
     app->openSubIdx = -1;
     app->submenuTracking = false;
-    if (app->hwndSubmenu) ShowWindow(app->hwndSubmenu, SW_HIDE);
+
+    if (app->hwndSubmenu) {
+        if (animate && wasVis && app->renderer.HasDComp() && IsWindowVisible(app->hwndSubmenu)) {
+            SetClickThrough(app->hwndSubmenu, true);
+            PopupMotionSpec m{};
+            m.fromOpacity = 1.0f;
+            m.toOpacity = 0.0f;
+            m.fromScale = 1.0f;
+            m.toScale = 0.99f;
+            m.centerXRatio = 0.5f;
+            m.centerYRatio = 0.5f;
+            m.durationSec = 0.05f;
+            m.easeOut = false;
+            app->renderer.AnimateWindowVisual(app->hwndSubmenu, app->menuDpi, m);
+            SetTimer(app->hwndSubmenu, kTimerSubmenuHideId, 56, nullptr);
+        } else {
+            KillTimer(app->hwndSubmenu, kTimerSubmenuHideId);
+            SetClickThrough(app->hwndSubmenu, false);
+            ShowWindow(app->hwndSubmenu, SW_HIDE);
+        }
+    }
     if (wasOpen && app->menuVisible) RenderMainMenu(app);
 }
 
-void CloseMenu(AppState* app, bool restoreFlyoutFocus) {
-    if (!app->menuVisible) return;
+void CloseMenu(AppState* app, bool restoreFlyoutFocus, bool animate) {
+    if (!app->menuVisible) {
+        if (!animate) {
+            if (app->hwndSubmenu) {
+                KillTimer(app->hwndSubmenu, kTimerSubmenuHideId);
+                SetClickThrough(app->hwndSubmenu, false);
+                ShowWindow(app->hwndSubmenu, SW_HIDE);
+            }
+            if (app->hwndMenu) {
+                KillTimer(app->hwndMenu, kTimerMenuHideId);
+                SetClickThrough(app->hwndMenu, false);
+                ShowWindow(app->hwndMenu, SW_HIDE);
+            }
+        }
+        return;
+    }
     if (app->hwndMenu) {
         KillTimer(app->hwndMenu, kTimerSubOpenId);
         KillTimer(app->hwndMenu, kTimerSubCloseId);
     }
+
+    bool subWasVis = app->submenuVisible;
     app->submenuVisible = false;
     app->submenuHoverIdx = -1;
     app->openSubIdx = -1;
     app->pendingSubIdx = -1;
     app->submenuTracking = false;
-    if (app->hwndSubmenu) ShowWindow(app->hwndSubmenu, SW_HIDE);
+
+    if (app->hwndSubmenu) {
+        if (animate && subWasVis && app->renderer.HasDComp() && IsWindowVisible(app->hwndSubmenu)) {
+            SetClickThrough(app->hwndSubmenu, true);
+            PopupMotionSpec ms{};
+            ms.fromOpacity = 1.0f;
+            ms.toOpacity = 0.0f;
+            ms.fromScale = 1.0f;
+            ms.toScale = 0.99f;
+            ms.durationSec = 0.055f;
+            ms.easeOut = false;
+            app->renderer.AnimateWindowVisual(app->hwndSubmenu, app->menuDpi, ms);
+            SetTimer(app->hwndSubmenu, kTimerSubmenuHideId, 60, nullptr);
+        } else {
+            KillTimer(app->hwndSubmenu, kTimerSubmenuHideId);
+            SetClickThrough(app->hwndSubmenu, false);
+            ShowWindow(app->hwndSubmenu, SW_HIDE);
+        }
+    }
 
     app->menuVisible = false;
     app->menuHoverIdx = -1;
     app->menuTracking = false;
-    if (app->hwndMenu) ShowWindow(app->hwndMenu, SW_HIDE);
+
+    if (app->hwndMenu) {
+        if (animate && app->renderer.HasDComp() && IsWindowVisible(app->hwndMenu)) {
+            SetClickThrough(app->hwndMenu, true);
+            PopupMotionSpec mm{};
+            mm.fromOpacity = 1.0f;
+            mm.toOpacity = 0.0f;
+            mm.fromScale = 1.0f;
+            mm.toScale = 0.99f;
+            mm.durationSec = 0.055f;
+            mm.easeOut = false;
+            app->renderer.AnimateWindowVisual(app->hwndMenu, app->menuDpi, mm);
+            SetTimer(app->hwndMenu, kTimerMenuHideId, 60, nullptr);
+        } else {
+            KillTimer(app->hwndMenu, kTimerMenuHideId);
+            SetClickThrough(app->hwndMenu, false);
+            ShowWindow(app->hwndMenu, SW_HIDE);
+        }
+    }
 
     if (restoreFlyoutFocus && app->flyoutVisible && app->hwndFlyout) {
         SetForegroundWindow(app->hwndFlyout);
@@ -230,11 +312,19 @@ void OpenSubmenuForRow(AppState* app, int rowIdx, bool selectFirst) {
 
     KillTimer(app->hwndMenu, kTimerSubOpenId);
     KillTimer(app->hwndMenu, kTimerSubCloseId);
+    KillTimer(app->hwndSubmenu, kTimerSubmenuHideId);
+    SetClickThrough(app->hwndSubmenu, false);
     app->pendingSubIdx = -1;
 
     app->submenuSpec = BuildSubmenuSpec(app, item.cmdId);
     app->openSubIdx = rowIdx;
     app->submenuHoverIdx = selectFirst ? 0 : -1;
+    app->submenuAnim = {};
+    if (selectFirst && !app->submenuSpec.items.empty()) {
+        app->submenuAnim.pillY = RenderEngine::MenuRowTopDip(app->submenuSpec, 0);
+        app->submenuAnim.pillAlpha = 1.0f;
+        app->submenuAnim.hasPillPos = true;
+    }
 
     float scale = static_cast<float>(app->menuDpi) / 96.0f;
     WidgetDimensions subDim = RenderEngine::MeasureMenu(app->submenuSpec);
@@ -263,9 +353,13 @@ void OpenSubmenuForRow(AppState* app, int rowIdx, bool selectFirst) {
     mi.cbSize = sizeof(mi);
     GetMonitorInfoW(hMon, &mi);
 
+    bool openedLeft = false;
     if (cardX + subCardW > mi.rcMonitor.right - marginPx) {
         int altX = mainCardLeft - gapPx - subCardW;
-        if (altX >= mi.rcMonitor.left + marginPx) cardX = altX;
+        if (altX >= mi.rcMonitor.left + marginPx) {
+            cardX = altX;
+            openedLeft = true;
+        }
     }
     cardX = std::clamp(cardX, static_cast<int>(mi.rcMonitor.left) + marginPx, static_cast<int>(mi.rcMonitor.right) - subCardW - marginPx);
     cardY = std::clamp(cardY, static_cast<int>(mi.rcMonitor.top) + marginPx, static_cast<int>(mi.rcMonitor.bottom) - subCardH - marginPx);
@@ -275,6 +369,22 @@ void OpenSubmenuForRow(AppState* app, int rowIdx, bool selectFirst) {
 
     RenderMainMenu(app);
     RenderSubmenu(app);
+
+    if (app->renderer.HasDComp()) {
+        PopupMotionSpec m{};
+        m.fromOpacity = 0.50f;
+        m.toOpacity = 1.0f;
+        m.fromOffsetXDip = openedLeft ? 5.0f : -5.0f;
+        m.toOffsetXDip = 0.0f;
+        m.fromScale = 0.988f;
+        m.toScale = 1.0f;
+        m.centerXRatio = openedLeft ? 1.0f : 0.0f;
+        m.centerYRatio = 0.5f;
+        m.durationSec = 0.075f;
+        m.easeOut = true;
+        app->renderer.AnimateWindowVisual(app->hwndSubmenu, app->menuDpi, m);
+    }
+
     SetWindowPos(app->hwndSubmenu, HWND_TOPMOST, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
 }
@@ -283,10 +393,12 @@ void ShowContextMenu(AppState* app, POINT ptScreen, bool openedFromFlyout, HWND 
     if (!app->hwndMenu) return;
 
     if (app->menuVisible && openedFromFlyout) {
-        CloseMenu(app, true);
+        CloseMenu(app, true, true);
         return;
     }
-    CloseMenu(app, false);
+    CloseMenu(app, false, false);
+    KillTimer(app->hwndMenu, kTimerMenuHideId);
+    SetClickThrough(app->hwndMenu, false);
 
     HMONITOR hMon = MonitorFromPoint(ptScreen, MONITOR_DEFAULTTONEAREST);
     MONITORINFO mi{};
@@ -327,6 +439,8 @@ void ShowContextMenu(AppState* app, POINT ptScreen, bool openedFromFlyout, HWND 
     app->pendingSubIdx = -1;
     app->submenuVisible = false;
     app->submenuHoverIdx = -1;
+    app->menuAnim = {};
+    app->submenuAnim = {};
 
     WidgetDimensions dim = RenderEngine::MeasureMenu(app->menuSpec);
     int winW = static_cast<int>(std::lround(dim.widthDip * scale));
@@ -340,6 +454,7 @@ void ShowContextMenu(AppState* app, POINT ptScreen, bool openedFromFlyout, HWND 
 
     int cardX = ptScreen.x;
     int cardY = ptScreen.y;
+    bool openedUpward = false;
 
     if (openedFromFlyout && app->flyoutVisible && app->hwndFlyout) {
         RECT rcFly{};
@@ -354,16 +469,22 @@ void ShowContextMenu(AppState* app, POINT ptScreen, bool openedFromFlyout, HWND 
         if (flyCardRight + gapPx + cardW <= mi.rcMonitor.right - marginPx) {
             cardX = flyCardRight + gapPx;
             cardY = flyCardBot - cardH;
+            openedUpward = true;
         } else if (flyCardLeft - gapPx - cardW >= mi.rcMonitor.left + marginPx) {
             cardX = flyCardLeft - gapPx - cardW;
             cardY = flyCardBot - cardH;
+            openedUpward = true;
         } else {
-            if (cardY + cardH > mi.rcWork.bottom - marginPx) cardY = ptScreen.y - cardH;
+            if (cardY + cardH > mi.rcWork.bottom - marginPx) {
+                cardY = ptScreen.y - cardH;
+                openedUpward = true;
+            }
             if (cardX + cardW > mi.rcMonitor.right - marginPx) cardX = ptScreen.x - cardW;
         }
     } else {
         if (cardY + cardH > mi.rcWork.bottom - marginPx) {
             cardY = ptScreen.y - cardH;
+            openedUpward = true;
         }
         if (cardX + cardW > mi.rcMonitor.right - marginPx) {
             cardX = ptScreen.x - cardW;
@@ -377,6 +498,22 @@ void ShowContextMenu(AppState* app, POINT ptScreen, bool openedFromFlyout, HWND 
     app->menuVisible = true;
 
     RenderMainMenu(app);
+
+    if (app->renderer.HasDComp()) {
+        PopupMotionSpec m{};
+        m.fromOpacity = 0.50f;
+        m.toOpacity = 1.0f;
+        m.fromOffsetYDip = openedUpward ? 5.0f : -5.0f;
+        m.toOffsetYDip = 0.0f;
+        m.fromScale = 0.985f;
+        m.toScale = 1.0f;
+        m.centerXRatio = 0.5f;
+        m.centerYRatio = openedUpward ? 1.0f : 0.0f;
+        m.durationSec = 0.085f;
+        m.easeOut = true;
+        app->renderer.AnimateWindowVisual(app->hwndMenu, app->menuDpi, m);
+    }
+
     SetWindowPos(app->hwndMenu, HWND_TOPMOST, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     SetForegroundWindow(app->hwndMenu);
@@ -393,20 +530,36 @@ LRESULT CALLBACK MenuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     if (!app) return DefWindowProcW(hwnd, msg, wParam, lParam);
 
     switch (msg) {
+        case WM_ERASEBKGND:
+            return 1;
+
+        case WM_PAINT: {
+            PAINTSTRUCT ps{};
+            BeginPaint(hwnd, &ps);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+
         case WM_ACTIVATE: {
             if (LOWORD(wParam) == WA_INACTIVE) {
                 HWND hNewActive = reinterpret_cast<HWND>(lParam);
                 bool stayFlyout = (app->flyoutVisible && hNewActive == app->hwndFlyout);
-                CloseMenu(app, false);
+                CloseMenu(app, false, true);
                 if (app->flyoutVisible && !stayFlyout) {
-                    HideFlyout(app);
+                    HideFlyout(app, true);
                 }
             }
             return 0;
         }
 
         case WM_TIMER:
-            if (wParam == kTimerSubOpenId) {
+            if (wParam == kTimerMenuHideId) {
+                KillTimer(hwnd, kTimerMenuHideId);
+                if (!app->menuVisible) {
+                    SetClickThrough(hwnd, false);
+                    ShowWindow(hwnd, SW_HIDE);
+                }
+            } else if (wParam == kTimerSubOpenId) {
                 KillTimer(hwnd, kTimerSubOpenId);
                 if (app->pendingSubIdx >= 0 && app->pendingSubIdx == app->menuHoverIdx) {
                     OpenSubmenuForRow(app, app->pendingSubIdx, false);
@@ -414,29 +567,29 @@ LRESULT CALLBACK MenuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             } else if (wParam == kTimerSubCloseId) {
                 KillTimer(hwnd, kTimerSubCloseId);
                 if (app->menuHoverIdx != app->openSubIdx && app->submenuHoverIdx < 0) {
-                    HideSubmenu(app);
+                    HideSubmenu(app, true);
                 }
             }
             return 0;
 
         case WM_KEYDOWN: {
             if (wParam == VK_ESCAPE) {
-                CloseMenu(app, true);
+                CloseMenu(app, true, true);
                 return 0;
             }
             if (wParam == VK_LEFT && app->submenuVisible) {
-                HideSubmenu(app);
+                HideSubmenu(app, true);
                 return 0;
             }
             if (wParam == VK_DOWN || wParam == VK_UP) {
                 int dir = (wParam == VK_DOWN) ? 1 : -1;
                 if (app->submenuVisible && app->submenuHoverIdx >= 0) {
                     app->submenuHoverIdx = StepMenuFocus(app->submenuSpec, app->submenuHoverIdx, dir);
-                    RenderSubmenu(app);
+                    KickInteractiveAnimation(app, app->hwndSubmenu);
                 } else {
                     KillTimer(hwnd, kTimerSubOpenId);
                     app->menuHoverIdx = StepMenuFocus(app->menuSpec, app->menuHoverIdx, dir);
-                    RenderMainMenu(app);
+                    KickInteractiveAnimation(app, hwnd);
                 }
                 return 0;
             }
@@ -450,7 +603,7 @@ LRESULT CALLBACK MenuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 if (app->submenuVisible && app->submenuHoverIdx >= 0 &&
                     app->submenuHoverIdx < static_cast<int>(app->submenuSpec.items.size())) {
                     UINT cmd = app->submenuSpec.items[static_cast<size_t>(app->submenuHoverIdx)].cmdId;
-                    CloseMenu(app, cmd != IDM_OPEN_FLYOUT && cmd != IDM_EXIT);
+                    CloseMenu(app, cmd != IDM_OPEN_FLYOUT && cmd != IDM_EXIT, cmd != IDM_EXIT);
                     ExecuteMenuCommand(app, cmd);
                     return 0;
                 }
@@ -460,7 +613,7 @@ LRESULT CALLBACK MenuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                         OpenSubmenuForRow(app, app->menuHoverIdx, true);
                     } else if (!it.isSeparator) {
                         UINT cmd = it.cmdId;
-                        CloseMenu(app, cmd != IDM_OPEN_FLYOUT && cmd != IDM_EXIT);
+                        CloseMenu(app, cmd != IDM_OPEN_FLYOUT && cmd != IDM_EXIT, cmd != IDM_EXIT);
                         ExecuteMenuCommand(app, cmd);
                     }
                 }
@@ -470,6 +623,7 @@ LRESULT CALLBACK MenuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         }
 
         case WM_MOUSEMOVE: {
+            if (!app->menuVisible) return 0;
             if (!app->menuTracking) {
                 TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, hwnd, 0 };
                 TrackMouseEvent(&tme);
@@ -485,15 +639,15 @@ LRESULT CALLBACK MenuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     KillTimer(hwnd, kTimerSubCloseId);
                     if (hit != app->openSubIdx) {
                         app->pendingSubIdx = hit;
-                        SetTimer(hwnd, kTimerSubOpenId, 85, nullptr);
+                        SetTimer(hwnd, kTimerSubOpenId, 35, nullptr);
                     }
                 } else {
                     app->pendingSubIdx = -1;
                     if (app->submenuVisible) {
-                        SetTimer(hwnd, kTimerSubCloseId, 240, nullptr);
+                        SetTimer(hwnd, kTimerSubCloseId, 180, nullptr);
                     }
                 }
-                RenderMainMenu(app);
+                KickInteractiveAnimation(app, hwnd);
             }
             return 0;
         }
@@ -504,15 +658,16 @@ LRESULT CALLBACK MenuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             app->pendingSubIdx = -1;
             if (app->menuHoverIdx != -1) {
                 app->menuHoverIdx = -1;
-                RenderMainMenu(app);
+                KickInteractiveAnimation(app, hwnd);
             }
             if (app->submenuVisible) {
-                SetTimer(hwnd, kTimerSubCloseId, 240, nullptr);
+                SetTimer(hwnd, kTimerSubCloseId, 180, nullptr);
             }
             return 0;
 
         case WM_LBUTTONUP:
         case WM_RBUTTONUP: {
+            if (!app->menuVisible) return 0;
             POINT pt{ static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam)) };
             int hit = HitTestMenuItem(app->menuItemRects, pt);
             if (hit >= 0 && hit < static_cast<int>(app->menuSpec.items.size())) {
@@ -521,7 +676,7 @@ LRESULT CALLBACK MenuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     OpenSubmenuForRow(app, hit, false);
                 } else if (!it.isSeparator) {
                     UINT cmd = it.cmdId;
-                    CloseMenu(app, cmd != IDM_OPEN_FLYOUT && cmd != IDM_EXIT);
+                    CloseMenu(app, cmd != IDM_OPEN_FLYOUT && cmd != IDM_EXIT, cmd != IDM_EXIT);
                     ExecuteMenuCommand(app, cmd);
                 }
             }
@@ -542,10 +697,32 @@ LRESULT CALLBACK SubmenuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     if (!app) return DefWindowProcW(hwnd, msg, wParam, lParam);
 
     switch (msg) {
+        case WM_ERASEBKGND:
+            return 1;
+
+        case WM_PAINT: {
+            PAINTSTRUCT ps{};
+            BeginPaint(hwnd, &ps);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+
+        case WM_TIMER:
+            if (wParam == kTimerSubmenuHideId) {
+                KillTimer(hwnd, kTimerSubmenuHideId);
+                if (!app->submenuVisible) {
+                    SetClickThrough(hwnd, false);
+                    ShowWindow(hwnd, SW_HIDE);
+                }
+                return 0;
+            }
+            break;
+
         case WM_MOUSEACTIVATE:
             return MA_NOACTIVATE;
 
         case WM_MOUSEMOVE: {
+            if (!app->submenuVisible) return 0;
             if (app->hwndMenu) KillTimer(app->hwndMenu, kTimerSubCloseId);
             if (!app->submenuTracking) {
                 TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, hwnd, 0 };
@@ -556,7 +733,7 @@ LRESULT CALLBACK SubmenuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             int hit = HitTestMenuItem(app->submenuItemRects, pt);
             if (hit != app->submenuHoverIdx) {
                 app->submenuHoverIdx = hit;
-                RenderSubmenu(app);
+                KickInteractiveAnimation(app, hwnd);
             }
             return 0;
         }
@@ -565,20 +742,21 @@ LRESULT CALLBACK SubmenuWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             app->submenuTracking = false;
             if (app->submenuHoverIdx != -1) {
                 app->submenuHoverIdx = -1;
-                RenderSubmenu(app);
+                KickInteractiveAnimation(app, hwnd);
             }
             if (app->hwndMenu && app->submenuVisible) {
-                SetTimer(app->hwndMenu, kTimerSubCloseId, 240, nullptr);
+                SetTimer(app->hwndMenu, kTimerSubCloseId, 180, nullptr);
             }
             return 0;
 
         case WM_LBUTTONUP:
         case WM_RBUTTONUP: {
+            if (!app->submenuVisible) return 0;
             POINT pt{ static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam)) };
             int hit = HitTestMenuItem(app->submenuItemRects, pt);
             if (hit >= 0 && hit < static_cast<int>(app->submenuSpec.items.size())) {
                 UINT cmd = app->submenuSpec.items[static_cast<size_t>(hit)].cmdId;
-                CloseMenu(app, cmd != IDM_OPEN_FLYOUT && cmd != IDM_EXIT);
+                CloseMenu(app, cmd != IDM_OPEN_FLYOUT && cmd != IDM_EXIT, cmd != IDM_EXIT);
                 ExecuteMenuCommand(app, cmd);
             }
             return 0;

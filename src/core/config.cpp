@@ -173,9 +173,21 @@ void SaveConfig(const AppConfig& cfg) {
     }
 }
 
+namespace {
+bool g_themeCacheValid = false;
+bool g_cachedSystemLight = false;
+} // namespace
+
+void InvalidateSystemThemeCache() {
+    g_themeCacheValid = false;
+}
+
 bool IsSystemLightTheme() {
+    if (g_themeCacheValid) return g_cachedSystemLight;
     HKEY hKey = nullptr;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, kThemeRegPath, 0, KEY_READ, &hKey) != ERROR_SUCCESS) {
+        g_cachedSystemLight = false;
+        g_themeCacheValid = true;
         return false;
     }
     DWORD val = 0;
@@ -187,6 +199,8 @@ bool IsSystemLightTheme() {
         light = (val != 0);
     }
     RegCloseKey(hKey);
+    g_cachedSystemLight = light;
+    g_themeCacheValid = true;
     return light;
 }
 

@@ -1,7 +1,57 @@
 #include "render/render_engine.hpp"
+#include "render/draw_primitives.hpp"
 #include "render/palette.hpp"
 #include <algorithm>
+#include <cmath>
 #include <cwchar>
+
+namespace {
+
+IDCompositionAnimation* CreateEaseOutCubicAnim(IDCompositionDevice* dev, float from, float to, float dur) {
+    if (!dev || dur <= 0.001f) return nullptr;
+    IDCompositionAnimation* anim = nullptr;
+    if (FAILED(dev->CreateAnimation(&anim)) || !anim) return nullptr;
+    // Front-loaded C1-continuous two-segment Fluent decelerate curve (zero overshoot):
+    // reaches 76% progress in the first 35% of duration, then feathers smoothly to 100%.
+    const float delta = to - from;
+    const float t1 = dur * 0.35f;
+    const float t2 = dur - t1;
+    const float invT1 = 1.0f / t1;
+    const float invT1_2 = invT1 * invT1;
+    const float invT1_3 = invT1_2 * invT1;
+    const float invT2 = 1.0f / t2;
+    const float invT2_2 = invT2 * invT2;
+    const float invT2_3 = invT2_2 * invT2;
+
+    constexpr float kMid = 0.76f;
+    constexpr float kRem = 1.0f - kMid;
+    constexpr float kC1 = 1.65f;
+    constexpr float kC2 = -1.4077f;
+    constexpr float kC3 = 0.5177f;
+
+    anim->AddCubic(0.0, from, delta * kC1 * invT1, delta * kC2 * invT1_2, delta * kC3 * invT1_3);
+    anim->AddCubic(static_cast<double>(t1),
+        from + delta * kMid,
+        delta * kRem * 3.0f * invT2,
+        -delta * kRem * 3.0f * invT2_2,
+        delta * kRem * invT2_3);
+    anim->End(static_cast<double>(dur), to);
+    return anim;
+}
+
+IDCompositionAnimation* CreateEaseInQuadAnim(IDCompositionDevice* dev, float from, float to, float dur) {
+    if (!dev || dur <= 0.001f) return nullptr;
+    IDCompositionAnimation* anim = nullptr;
+    if (FAILED(dev->CreateAnimation(&anim)) || !anim) return nullptr;
+    float delta = to - from;
+    float invD = 1.0f / dur;
+    // f(t) = from + delta * (t/D)^2
+    anim->AddCubic(0.0, from, 0.0f, delta * invD * invD, 0.0f);
+    anim->End(static_cast<double>(dur), to);
+    return anim;
+}
+
+} // namespace
 
 RenderEngine::RenderEngine() = default;
 
@@ -22,6 +72,7 @@ RenderEngine::~RenderEngine() {
     SafeRelease(m_fmtMinLabel);
     SafeRelease(m_fmtValue);
     SafeRelease(m_fmtLabel);
+    SafeRelease(m_roundStroke);
     SafeRelease(m_tabularTypo);
     SafeRelease(m_wicFactory);
     SafeRelease(m_dwFactory);
@@ -29,6 +80,8 @@ RenderEngine::~RenderEngine() {
 }
 
 void RenderEngine::ReleaseWicTarget(WicTarget& target) {
+    SafeRelease(target.brAux);
+    SafeRelease(target.brMain);
     SafeRelease(target.rt);
     SafeRelease(target.bitmap);
     target.width = 0;
@@ -53,6 +106,8 @@ bool RenderEngine::Initialize() {
         DWRITE_FONT_FEATURE feat{ DWRITE_FONT_FEATURE_TAG_TABULAR_FIGURES, 1 };
         m_tabularTypo->AddFontFeature(feat);
     }
+
+    m_roundStroke = CreateRoundStrokeStyle(m_d2dFactory);
 
     const wchar_t* fontPrimary = L"Segoe UI Variable Text";
     auto makeFmt = [&](float size, DWRITE_FONT_WEIGHT weight, DWRITE_TEXT_ALIGNMENT align,
@@ -79,12 +134,16 @@ bool RenderEngine::Initialize() {
     if (!makeFmt(18.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtFlyCardBig)) return false;
     if (!makeFmt(11.0f, DWRITE_FONT_WEIGHT_MEDIUM, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, &m_fmtFlyBtn)) return false;
 
+    // Eagerly initialize DirectComposition so popup windows can opt into WS_EX_NOREDIRECTIONBITMAP.
+    EnsureDCompDevice();
+
     return true;
 }
 
 bool RenderEngine::EnsureWicTarget(WicTarget& target, int widthPx, int heightPx, UINT dpi) {
     if (!m_wicFactory || !m_d2dFactory || widthPx <= 0 || heightPx <= 0) return false;
-    if (target.bitmap && target.rt && target.width == widthPx && target.height == heightPx) {
+    if (target.bitmap && target.rt && target.brMain && target.brAux &&
+        target.width == widthPx && target.height == heightPx) {
         target.rt->SetDpi(static_cast<FLOAT>(dpi), static_cast<FLOAT>(dpi));
         return true;
     }
@@ -108,6 +167,11 @@ bool RenderEngine::EnsureWicTarget(WicTarget& target, int widthPx, int heightPx,
         return false;
     }
     target.rt->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+    if (FAILED(target.rt->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 1), &target.brMain)) ||
+        FAILED(target.rt->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 1), &target.brAux))) {
+        ReleaseWicTarget(target);
+        return false;
+    }
     return true;
 }
 
@@ -172,6 +236,10 @@ float RenderEngine::MeasureMenuLabelWidth(const wchar_t* text) const {
 }
 
 void RenderEngine::ReleaseDCompTargetEntry(DCompTargetEntry& entry) {
+    SafeRelease(entry.transformGroup);
+    SafeRelease(entry.scale);
+    SafeRelease(entry.translate);
+    SafeRelease(entry.effectGroup);
     SafeRelease(entry.surface);
     SafeRelease(entry.visual);
     SafeRelease(entry.target);
@@ -199,6 +267,8 @@ void RenderEngine::ResetWidgetTarget(HWND hwnd) {
 
 void RenderEngine::ResetDCompDevice() {
     ResetWidgetTarget(nullptr);
+    SafeRelease(m_dcompBrAux);
+    SafeRelease(m_dcompBrMain);
     SafeRelease(m_d2dDc);
     SafeRelease(m_dcompDevice);
     SafeRelease(m_d2dDevice);
@@ -206,7 +276,7 @@ void RenderEngine::ResetDCompDevice() {
 }
 
 bool RenderEngine::EnsureDCompDevice() {
-    if (m_dcompDevice && m_d2dDc && m_d2dDevice && m_d3dDevice) {
+    if (m_dcompDevice && m_d2dDc && m_d2dDevice && m_d3dDevice && m_dcompBrMain && m_dcompBrAux) {
         return true;
     }
     ResetDCompDevice();
@@ -215,7 +285,7 @@ bool RenderEngine::EnsureDCompDevice() {
     D3D_FEATURE_LEVEL fl{};
     UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_SINGLETHREADED;
     // Prefer WARP for D3D11 so the helper doesn't pull heavy GPU driver private heaps (~4 MB vs ~55 MB);
-    // DirectComposition still composites the resulting surface on the GPU inside DWM.
+    // DirectComposition still composites the resulting surface and runs Visual animations on the GPU inside DWM.
     HRESULT hr = D3D11CreateDevice(
         nullptr, D3D_DRIVER_TYPE_WARP, nullptr, flags,
         nullptr, 0, D3D11_SDK_VERSION, &m_d3dDevice, &fl, nullptr);
@@ -241,28 +311,35 @@ bool RenderEngine::EnsureDCompDevice() {
         hr = m_d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &m_d2dDc);
     }
     if (SUCCEEDED(hr) && m_d2dDc) {
+        hr = m_d2dDc->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 1), &m_dcompBrMain);
+    }
+    if (SUCCEEDED(hr) && m_d2dDc) {
+        hr = m_d2dDc->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 1), &m_dcompBrAux);
+    }
+    if (SUCCEEDED(hr) && m_d2dDc) {
         hr = DCompositionCreateDevice(dxgiDev, IID_PPV_ARGS(&m_dcompDevice));
     }
     SafeRelease(dxgiDev);
 
-    if (FAILED(hr) || !m_d2dDc || !m_dcompDevice) {
+    if (FAILED(hr) || !m_d2dDc || !m_dcompDevice || !m_dcompBrMain || !m_dcompBrAux) {
         ResetDCompDevice();
         return false;
     }
     return true;
 }
 
+RenderEngine::DCompTargetEntry* RenderEngine::FindDCompEntry(HWND hwnd) {
+    for (auto& existing : m_dcompTargets) {
+        if (existing.hwnd == hwnd) return &existing;
+    }
+    return nullptr;
+}
+
 RenderEngine::DCompTargetEntry* RenderEngine::EnsureDCompSurface(HWND hwnd, int widthPx, int heightPx) {
     if (!hwnd || widthPx <= 0 || heightPx <= 0) return nullptr;
     if (!EnsureDCompDevice()) return nullptr;
 
-    DCompTargetEntry* entry = nullptr;
-    for (auto& existing : m_dcompTargets) {
-        if (existing.hwnd == hwnd) {
-            entry = &existing;
-            break;
-        }
-    }
+    DCompTargetEntry* entry = FindDCompEntry(hwnd);
 
     if (!entry) {
         DCompTargetEntry created;
@@ -275,6 +352,26 @@ RenderEngine::DCompTargetEntry* RenderEngine::EnsureDCompSurface(HWND hwnd, int 
             ReleaseDCompTargetEntry(created);
             return nullptr;
         }
+        created.visual->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
+
+        if (SUCCEEDED(m_dcompDevice->CreateEffectGroup(&created.effectGroup)) && created.effectGroup) {
+            created.effectGroup->SetOpacity(1.0f);
+            created.visual->SetEffect(created.effectGroup);
+        }
+        if (SUCCEEDED(m_dcompDevice->CreateScaleTransform(&created.scale)) &&
+            SUCCEEDED(m_dcompDevice->CreateTranslateTransform(&created.translate)) &&
+            created.scale && created.translate) {
+            created.scale->SetScaleX(1.0f);
+            created.scale->SetScaleY(1.0f);
+            created.translate->SetOffsetX(0.0f);
+            created.translate->SetOffsetY(0.0f);
+            IDCompositionTransform* xforms[2] = { created.scale, created.translate };
+            if (SUCCEEDED(m_dcompDevice->CreateTransformGroup(xforms, 2, &created.transformGroup)) &&
+                created.transformGroup) {
+                created.visual->SetTransform(created.transformGroup);
+            }
+        }
+
         if (FAILED(created.target->SetRoot(created.visual))) {
             ReleaseDCompTargetEntry(created);
             return nullptr;
@@ -305,80 +402,110 @@ RenderEngine::DCompTargetEntry* RenderEngine::EnsureDCompSurface(HWND hwnd, int 
     return entry;
 }
 
-bool RenderEngine::RenderWidgetViaDComp(
-    HWND hwnd,
-    int widthPx,
-    int heightPx,
-    UINT dpi,
-    const WidgetDimensions& dim,
-    const AppConfig& cfg,
-    const SystemSnapshot& snap,
-    const HistoryBuffer& history,
-    const GoldQuote& gold,
-    bool isHovered,
-    bool isPressed) {
-    for (int attempt = 0; attempt < 2; ++attempt) {
-        DCompTargetEntry* entry = EnsureDCompSurface(hwnd, widthPx, heightPx);
-        if (!entry || !entry->surface) {
-            ResetDCompDevice();
-            continue;
-        }
+bool RenderEngine::UsesDCompWindow(HWND hwnd) const {
+    if (!hwnd) return false;
+    LONG_PTR ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+    if ((ex & WS_EX_NOREDIRECTIONBITMAP) != 0) return true;
+    LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+    return (style & WS_CHILD) != 0;
+}
 
-        IDXGISurface* dxgiSurf = nullptr;
-        POINT offset{};
-        HRESULT hr = entry->surface->BeginDraw(nullptr, IID_PPV_ARGS(&dxgiSurf), &offset);
-        if (FAILED(hr) || !dxgiSurf) {
-            SafeRelease(dxgiSurf);
-            ResetDCompDevice();
-            continue;
-        }
-
-        D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(
-            D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
-            static_cast<FLOAT>(dpi), static_cast<FLOAT>(dpi));
-        ID2D1Bitmap1* d2dBmp = nullptr;
-        hr = m_d2dDc->CreateBitmapFromDxgiSurface(dxgiSurf, &bp, &d2dBmp);
-        if (FAILED(hr) || !d2dBmp) {
-            SafeRelease(d2dBmp);
-            SafeRelease(dxgiSurf);
-            entry->surface->EndDraw();
-            ResetDCompDevice();
-            continue;
-        }
-
-        m_d2dDc->SetTarget(d2dBmp);
-        m_d2dDc->SetDpi(static_cast<FLOAT>(dpi), static_cast<FLOAT>(dpi));
-        m_d2dDc->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
-
-        float scale = static_cast<float>(dpi) / 96.0f;
-        float offX = static_cast<float>(offset.x) / scale;
-        float offY = static_cast<float>(offset.y) / scale;
-
-        m_d2dDc->BeginDraw();
-        m_d2dDc->SetTransform(D2D1::Matrix3x2F::Translation(offX, offY));
-        m_d2dDc->PushAxisAlignedClip(
-            D2D1::RectF(0.0f, 0.0f, static_cast<float>(widthPx) / scale, static_cast<float>(heightPx) / scale),
-            D2D1_ANTIALIAS_MODE_ALIASED);
-        m_d2dDc->Clear(D2D1::ColorF(0, 0, 0, 0));
-
-        DrawWidgetContent(m_d2dDc, dim, cfg, snap, history, gold, isHovered, isPressed);
-
-        m_d2dDc->PopAxisAlignedClip();
-        m_d2dDc->SetTransform(D2D1::Matrix3x2F::Identity());
-        HRESULT hrEnd = m_d2dDc->EndDraw();
-        m_d2dDc->SetTarget(nullptr);
-
-        SafeRelease(d2dBmp);
-        SafeRelease(dxgiSurf);
-
-        HRESULT hrSurfEnd = entry->surface->EndDraw();
-        HRESULT hrCommit = m_dcompDevice->Commit();
-
-        if (SUCCEEDED(hrEnd) && SUCCEEDED(hrSurfEnd) && SUCCEEDED(hrCommit)) {
-            return true;
-        }
-        ResetDCompDevice();
+void RenderEngine::SyncPopupWindowBounds(HWND hwnd, POINT ptScreen, int widthPx, int heightPx) {
+    if (!hwnd) return;
+    RECT rc{};
+    if (GetWindowRect(hwnd, &rc) &&
+        rc.left == ptScreen.x &&
+        rc.top == ptScreen.y &&
+        (rc.right - rc.left) == widthPx &&
+        (rc.bottom - rc.top) == heightPx) {
+        return;
     }
-    return false;
+    SetWindowPos(hwnd, nullptr, ptScreen.x, ptScreen.y, widthPx, heightPx,
+        SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW);
+}
+
+bool RenderEngine::AnimateWindowVisual(HWND hwnd, UINT dpi, const PopupMotionSpec& spec) {
+    if (!hwnd || !m_dcompDevice) return false;
+    DCompTargetEntry* entry = FindDCompEntry(hwnd);
+    if (!entry) return false;
+
+    const float scale = static_cast<float>(dpi ? dpi : 96) / 96.0f;
+    const float dur = std::max(0.02f, spec.durationSec);
+
+    auto makeMotion = [&](float from, float to, bool easeOutCurve) -> IDCompositionAnimation* {
+        return easeOutCurve
+            ? CreateEaseOutCubicAnim(m_dcompDevice, from, to, dur)
+            : CreateEaseInQuadAnim(m_dcompDevice, from, to, dur);
+    };
+
+    if (entry->effectGroup) {
+        if (std::fabs(spec.toOpacity - spec.fromOpacity) > 0.001f) {
+            // Opacity always uses ease-out cubic so both reveal and dismiss feel responsive from frame 1.
+            if (IDCompositionAnimation* a = CreateEaseOutCubicAnim(m_dcompDevice, spec.fromOpacity, spec.toOpacity, dur)) {
+                entry->effectGroup->SetOpacity(a);
+                a->Release();
+            }
+        } else {
+            entry->effectGroup->SetOpacity(spec.toOpacity);
+        }
+    }
+
+    if (entry->translate) {
+        float fx = spec.fromOffsetXDip * scale;
+        float tx = spec.toOffsetXDip * scale;
+        float fy = spec.fromOffsetYDip * scale;
+        float ty = spec.toOffsetYDip * scale;
+        if (std::fabs(tx - fx) > 0.1f) {
+            if (IDCompositionAnimation* a = makeMotion(fx, tx, spec.easeOut)) {
+                entry->translate->SetOffsetX(a);
+                a->Release();
+            }
+        } else {
+            entry->translate->SetOffsetX(tx);
+        }
+        if (std::fabs(ty - fy) > 0.1f) {
+            if (IDCompositionAnimation* a = makeMotion(fy, ty, spec.easeOut)) {
+                entry->translate->SetOffsetY(a);
+                a->Release();
+            }
+        } else {
+            entry->translate->SetOffsetY(ty);
+        }
+    }
+
+    if (entry->scale) {
+        entry->scale->SetCenterX(static_cast<float>(entry->width) * spec.centerXRatio);
+        entry->scale->SetCenterY(static_cast<float>(entry->height) * spec.centerYRatio);
+        if (std::fabs(spec.toScale - spec.fromScale) > 0.0005f) {
+            if (IDCompositionAnimation* ax = makeMotion(spec.fromScale, spec.toScale, spec.easeOut)) {
+                entry->scale->SetScaleX(ax);
+                ax->Release();
+            }
+            if (IDCompositionAnimation* ay = makeMotion(spec.fromScale, spec.toScale, spec.easeOut)) {
+                entry->scale->SetScaleY(ay);
+                ay->Release();
+            }
+        } else {
+            entry->scale->SetScaleX(spec.toScale);
+            entry->scale->SetScaleY(spec.toScale);
+        }
+    }
+
+    return SUCCEEDED(m_dcompDevice->Commit());
+}
+
+bool RenderEngine::ResetWindowVisual(HWND hwnd) {
+    if (!hwnd || !m_dcompDevice) return false;
+    DCompTargetEntry* entry = FindDCompEntry(hwnd);
+    if (!entry) return false;
+    if (entry->effectGroup) entry->effectGroup->SetOpacity(1.0f);
+    if (entry->translate) {
+        entry->translate->SetOffsetX(0.0f);
+        entry->translate->SetOffsetY(0.0f);
+    }
+    if (entry->scale) {
+        entry->scale->SetScaleX(1.0f);
+        entry->scale->SetScaleY(1.0f);
+    }
+    return SUCCEEDED(m_dcompDevice->Commit());
 }

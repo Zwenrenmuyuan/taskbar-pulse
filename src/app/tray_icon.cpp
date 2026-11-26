@@ -3,6 +3,34 @@
 #include <cstdio>
 #include <cwchar>
 
+namespace {
+
+void CALLBACK TrayModifyWorker(PTP_CALLBACK_INSTANCE, void* context, PTP_WORK) {
+    auto* state = static_cast<TrayAsyncState*>(context);
+    for (;;) {
+        NOTIFYICONDATAW nid{};
+        bool haveWork = false;
+        AcquireSRWLockExclusive(&state->lock);
+        if (!state->shutdown && state->hasPending) {
+            nid = state->pendingNid;
+            state->hasPending = false;
+            haveWork = true;
+        }
+        ReleaseSRWLockExclusive(&state->lock);
+
+        if (!haveWork) break;
+        Shell_NotifyIconW(NIM_MODIFY, &nid);
+    }
+}
+
+void EnsureTrayAsyncWork(TrayAsyncState& state) {
+    if (!state.work) {
+        state.work = CreateThreadpoolWork(&TrayModifyWorker, &state, nullptr);
+    }
+}
+
+} // namespace
+
 void UpdateTrayIcon(AppState* app, bool add) {
     if (!app->hwndHost) return;
     NOTIFYICONDATAW nid{};
@@ -38,17 +66,47 @@ void UpdateTrayIcon(AppState* app, bool add) {
     }
 
     if (add) {
+        EnsureTrayAsyncWork(app->trayAsync);
+        AcquireSRWLockExclusive(&app->trayAsync.lock);
+        app->trayAsync.shutdown = false;
+        app->trayAsync.hasPending = false;
+        app->trayAsync.lastTip = nid.szTip;
+        ReleaseSRWLockExclusive(&app->trayAsync.lock);
+
         app->trayAdded = Shell_NotifyIconW(NIM_ADD, &nid) != FALSE;
         if (app->trayAdded) {
             nid.uVersion = NOTIFYICON_VERSION_4;
             Shell_NotifyIconW(NIM_SETVERSION, &nid);
         }
     } else if (app->trayAdded) {
-        Shell_NotifyIconW(NIM_MODIFY, &nid);
+        if (app->trayAsync.lastTip == nid.szTip) return;
+        app->trayAsync.lastTip = nid.szTip;
+
+        EnsureTrayAsyncWork(app->trayAsync);
+        if (app->trayAsync.work) {
+            AcquireSRWLockExclusive(&app->trayAsync.lock);
+            app->trayAsync.pendingNid = nid;
+            app->trayAsync.hasPending = true;
+            ReleaseSRWLockExclusive(&app->trayAsync.lock);
+            SubmitThreadpoolWork(app->trayAsync.work);
+        } else {
+            Shell_NotifyIconW(NIM_MODIFY, &nid);
+        }
     }
 }
 
 void RemoveTrayIcon(AppState* app) {
+    if (!app) return;
+    if (app->trayAsync.work) {
+        AcquireSRWLockExclusive(&app->trayAsync.lock);
+        app->trayAsync.shutdown = true;
+        app->trayAsync.hasPending = false;
+        ReleaseSRWLockExclusive(&app->trayAsync.lock);
+
+        WaitForThreadpoolWorkCallbacks(app->trayAsync.work, TRUE);
+        CloseThreadpoolWork(app->trayAsync.work);
+        app->trayAsync.work = nullptr;
+    }
     if (!app->trayAdded || !app->hwndHost) return;
     NOTIFYICONDATAW nid{};
     nid.cbSize = sizeof(nid);

@@ -52,6 +52,7 @@ AppConfig LoadConfig();
 void SaveConfig(const AppConfig& cfg);
 
 bool IsSystemLightTheme();
+void InvalidateSystemThemeCache();
 bool ResolveEffectiveLightTheme(const AppConfig& cfg);
 
 bool IsAutoStartEnabled();
