@@ -281,10 +281,14 @@ bool RenderEngine::RenderToDCompSurface(HWND hwnd, int widthPx, int heightPx, UI
             continue;
         }
 
+        // Keep the D2D target in 1:1 physical pixels (96 DPI) and compose DPI scale +
+        // integer atlas offset in a single world matrix. Using SetDpi(dpi) with a DIP
+        // Translation(offset / scale) shifts DirectWrite pixel-snapping by +/-1px
+        // whenever DirectComposition rotates atlas slots at 125%/150%/175% DPI.
         D2D1_BITMAP_PROPERTIES1 bp = D2D1::BitmapProperties1(
             D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
-            static_cast<FLOAT>(dpi), static_cast<FLOAT>(dpi));
+            96.0f, 96.0f);
         ID2D1Bitmap1* d2dBmp = nullptr;
         hr = m_d2dDc->CreateBitmapFromDxgiSurface(dxgiSurf, &bp, &d2dBmp);
         if (FAILED(hr) || !d2dBmp) {
@@ -296,24 +300,26 @@ bool RenderEngine::RenderToDCompSurface(HWND hwnd, int widthPx, int heightPx, UI
         }
 
         m_d2dDc->SetTarget(d2dBmp);
-        m_d2dDc->SetDpi(static_cast<FLOAT>(dpi), static_cast<FLOAT>(dpi));
+        m_d2dDc->SetDpi(96.0f, 96.0f);
         m_d2dDc->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
 
-        float scale = static_cast<float>(dpi) / 96.0f;
-        float offX = static_cast<float>(offset.x) / scale;
-        float offY = static_cast<float>(offset.y) / scale;
+        const float scale = static_cast<float>(dpi ? dpi : 96u) / 96.0f;
+        const float pxX = static_cast<float>(offset.x);
+        const float pxY = static_cast<float>(offset.y);
 
         m_d2dDc->BeginDraw();
-        m_d2dDc->SetTransform(D2D1::Matrix3x2F::Translation(offX, offY));
+        m_d2dDc->SetTransform(D2D1::Matrix3x2F::Identity());
         m_d2dDc->PushAxisAlignedClip(
-            D2D1::RectF(0.0f, 0.0f, static_cast<float>(widthPx) / scale, static_cast<float>(heightPx) / scale),
+            D2D1::RectF(pxX, pxY, pxX + static_cast<float>(widthPx), pxY + static_cast<float>(heightPx)),
             D2D1_ANTIALIAS_MODE_ALIASED);
         m_d2dDc->Clear(D2D1::ColorF(0, 0, 0, 0));
+        m_d2dDc->SetTransform(
+            D2D1::Matrix3x2F::Scale(scale, scale) * D2D1::Matrix3x2F::Translation(pxX, pxY));
 
         drawFn(m_d2dDc, m_dcompBrMain, m_dcompBrAux);
 
-        m_d2dDc->PopAxisAlignedClip();
         m_d2dDc->SetTransform(D2D1::Matrix3x2F::Identity());
+        m_d2dDc->PopAxisAlignedClip();
         HRESULT hrEnd = m_d2dDc->EndDraw();
         m_d2dDc->SetTarget(nullptr);
 

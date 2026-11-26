@@ -19,13 +19,15 @@
 void DrawVectorArrow(ID2D1RenderTarget* rt, ID2D1StrokeStyle* roundStroke, float cx, float cy, bool up, ID2D1Brush* brush);
 void DrawMiniBar(ID2D1RenderTarget* rt, float x, float y, float w, float h, double pct, ID2D1Brush* trackBrush, ID2D1Brush* fillBrush);
 void DrawSegmentedMeter(ID2D1RenderTarget* rt, float x, float y, float w, float h, double pct, int segments,
-    const D2D1_COLOR_F& trackCol, const D2D1_COLOR_F& fillCol, ID2D1SolidColorBrush* brush);
+    const D2D1_COLOR_F& trackCol, const D2D1_COLOR_F& fillCol, ID2D1SolidColorBrush* brush,
+    float gap = 2.4f, bool forceFirstLit = false);
 void DrawToggleSwitch(ID2D1RenderTarget* rt, float x, float y, float w, float h, float progress,
     const D2D1_COLOR_F& offTrack, const D2D1_COLOR_F& onTrack, const D2D1_COLOR_F& offThumb,
     const D2D1_COLOR_F& onThumb, ID2D1SolidColorBrush* brush);
 
-void DrawCpuIcon(ID2D1RenderTarget* rt, ID2D1StrokeStyle* roundStroke, float cx, float cy, ID2D1Brush* brush);
-void DrawGpuIcon(ID2D1RenderTarget* rt, ID2D1StrokeStyle* roundStroke, float cx, float cy, ID2D1Brush* brush);
+void DrawCpuIcon(ID2D1RenderTarget* rt, ID2D1StrokeStyle* roundStroke, float cx, float cy, ID2D1Brush* brush, float scale = 1.0f);
+void DrawGpuIcon(ID2D1RenderTarget* rt, ID2D1StrokeStyle* roundStroke, float cx, float cy, ID2D1Brush* brush, float scale = 1.0f);
+void DrawGoldIcon(ID2D1RenderTarget* rt, ID2D1StrokeStyle* roundStroke, float cx, float cy, ID2D1Brush* brush, float scale = 1.0f);
 void DrawNetIcon(ID2D1RenderTarget* rt, ID2D1StrokeStyle* roundStroke, float cx, float cy, ID2D1Brush* brush);
 void DrawGearIcon(ID2D1RenderTarget* rt, ID2D1StrokeStyle* roundStroke, float cx, float cy, ID2D1Brush* brush);
 void DrawBackChevronIcon(ID2D1RenderTarget* rt, ID2D1StrokeStyle* roundStroke, float cx, float cy, ID2D1Brush* brush);

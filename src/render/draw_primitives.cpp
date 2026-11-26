@@ -49,12 +49,13 @@ void DrawSegmentedMeter(
     int segments,
     const D2D1_COLOR_F& trackCol,
     const D2D1_COLOR_F& fillCol,
-    ID2D1SolidColorBrush* brush) {
+    ID2D1SolidColorBrush* brush,
+    float gap,
+    bool forceFirstLit) {
     if (!rt || !brush || segments <= 0 || w <= 4.0f) return;
-    const float gap = 2.4f;
     const float segW = (w - gap * static_cast<float>(segments - 1)) / static_cast<float>(segments);
     if (segW <= 0.8f) return;
-    const float rad = std::min(1.6f, segW * 0.45f);
+    const float rad = std::min(1.6f, std::min(segW, h) * 0.42f);
     const float exactLit = static_cast<float>(std::clamp(pct / 100.0, 0.0, 1.0) * static_cast<double>(segments));
 
     for (int i = 0; i < segments; ++i) {
@@ -62,7 +63,7 @@ void DrawSegmentedMeter(
         D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(D2D1::RectF(sx, y, sx + segW, y + h), rad, rad);
 
         float frac = std::clamp(exactLit - static_cast<float>(i), 0.0f, 1.0f);
-        if (i == 0 && pct > 0.1 && frac < 1.0f) frac = 1.0f;
+        if (i == 0 && (forceFirstLit || pct > 0.1) && frac < 1.0f) frac = 1.0f;
 
         if (frac >= 0.99f) {
             brush->SetColor(fillCol);
@@ -113,38 +114,76 @@ void DrawToggleSwitch(
     rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), thumbR, thumbR), brush);
 }
 
-void DrawCpuIcon(ID2D1RenderTarget* rt, ID2D1StrokeStyle* roundStroke, float cx, float cy, ID2D1Brush* brush) {
+void DrawCpuIcon(ID2D1RenderTarget* rt, ID2D1StrokeStyle* roundStroke, float cx, float cy, ID2D1Brush* brush, float scale) {
     if (!rt || !brush) return;
+    const float s = std::max(0.5f, scale);
+    const float sw = std::max(1.05f, 1.25f * s);
+    const float pw = std::max(1.0f, 1.15f * s);
     // Outer die body
-    D2D1_ROUNDED_RECT body = D2D1::RoundedRect(D2D1::RectF(cx - 4.0f, cy - 4.0f, cx + 4.0f, cy + 4.0f), 1.4f, 1.4f);
-    rt->DrawRoundedRectangle(&body, brush, 1.25f, roundStroke);
-    // Inner core
-    D2D1_ROUNDED_RECT core = D2D1::RoundedRect(D2D1::RectF(cx - 1.6f, cy - 1.6f, cx + 1.6f, cy + 1.6f), 0.5f, 0.5f);
-    rt->DrawRoundedRectangle(&core, brush, 1.05f, roundStroke);
+    D2D1_ROUNDED_RECT body = D2D1::RoundedRect(
+        D2D1::RectF(cx - 4.0f * s, cy - 4.0f * s, cx + 4.0f * s, cy + 4.0f * s), 1.4f * s, 1.4f * s);
+    rt->DrawRoundedRectangle(&body, brush, sw, roundStroke);
+    // Inner core (filled die reads crisper at micro sizes)
+    if (s < 0.92f) {
+        D2D1_ROUNDED_RECT core = D2D1::RoundedRect(
+            D2D1::RectF(cx - 1.55f * s, cy - 1.55f * s, cx + 1.55f * s, cy + 1.55f * s), 0.45f * s, 0.45f * s);
+        rt->FillRoundedRectangle(&core, brush);
+    } else {
+        D2D1_ROUNDED_RECT core = D2D1::RoundedRect(
+            D2D1::RectF(cx - 1.6f * s, cy - 1.6f * s, cx + 1.6f * s, cy + 1.6f * s), 0.5f * s, 0.5f * s);
+        rt->DrawRoundedRectangle(&core, brush, std::max(1.0f, 1.05f * s), roundStroke);
+    }
     // 8 micro pins
-    const float p1 = 4.2f;
-    const float p2 = 6.1f;
-    const float off = 1.8f;
-    rt->DrawLine(D2D1::Point2F(cx - off, cy - p1), D2D1::Point2F(cx - off, cy - p2), brush, 1.15f, roundStroke);
-    rt->DrawLine(D2D1::Point2F(cx + off, cy - p1), D2D1::Point2F(cx + off, cy - p2), brush, 1.15f, roundStroke);
-    rt->DrawLine(D2D1::Point2F(cx - off, cy + p1), D2D1::Point2F(cx - off, cy + p2), brush, 1.15f, roundStroke);
-    rt->DrawLine(D2D1::Point2F(cx + off, cy + p1), D2D1::Point2F(cx + off, cy + p2), brush, 1.15f, roundStroke);
-    rt->DrawLine(D2D1::Point2F(cx - p1, cy - off), D2D1::Point2F(cx - p2, cy - off), brush, 1.15f, roundStroke);
-    rt->DrawLine(D2D1::Point2F(cx - p1, cy + off), D2D1::Point2F(cx - p2, cy + off), brush, 1.15f, roundStroke);
-    rt->DrawLine(D2D1::Point2F(cx + p1, cy - off), D2D1::Point2F(cx + p2, cy - off), brush, 1.15f, roundStroke);
-    rt->DrawLine(D2D1::Point2F(cx + p1, cy + off), D2D1::Point2F(cx + p2, cy + off), brush, 1.15f, roundStroke);
+    const float p1 = 4.2f * s;
+    const float p2 = 6.1f * s;
+    const float off = 1.8f * s;
+    rt->DrawLine(D2D1::Point2F(cx - off, cy - p1), D2D1::Point2F(cx - off, cy - p2), brush, pw, roundStroke);
+    rt->DrawLine(D2D1::Point2F(cx + off, cy - p1), D2D1::Point2F(cx + off, cy - p2), brush, pw, roundStroke);
+    rt->DrawLine(D2D1::Point2F(cx - off, cy + p1), D2D1::Point2F(cx - off, cy + p2), brush, pw, roundStroke);
+    rt->DrawLine(D2D1::Point2F(cx + off, cy + p1), D2D1::Point2F(cx + off, cy + p2), brush, pw, roundStroke);
+    rt->DrawLine(D2D1::Point2F(cx - p1, cy - off), D2D1::Point2F(cx - p2, cy - off), brush, pw, roundStroke);
+    rt->DrawLine(D2D1::Point2F(cx - p1, cy + off), D2D1::Point2F(cx - p2, cy + off), brush, pw, roundStroke);
+    rt->DrawLine(D2D1::Point2F(cx + p1, cy - off), D2D1::Point2F(cx + p2, cy - off), brush, pw, roundStroke);
+    rt->DrawLine(D2D1::Point2F(cx + p1, cy + off), D2D1::Point2F(cx + p2, cy + off), brush, pw, roundStroke);
 }
 
-void DrawGpuIcon(ID2D1RenderTarget* rt, ID2D1StrokeStyle* roundStroke, float cx, float cy, ID2D1Brush* brush) {
+void DrawGpuIcon(ID2D1RenderTarget* rt, ID2D1StrokeStyle* roundStroke, float cx, float cy, ID2D1Brush* brush, float scale) {
     if (!rt || !brush) return;
+    const float s = std::max(0.5f, scale);
+    const float sw = std::max(1.05f, 1.25f * s);
+    const float fw = std::max(1.0f, 1.15f * s);
     // Card shroud
-    D2D1_ROUNDED_RECT shroud = D2D1::RoundedRect(D2D1::RectF(cx - 6.0f, cy - 4.0f, cx + 6.0f, cy + 4.0f), 1.7f, 1.7f);
-    rt->DrawRoundedRectangle(&shroud, brush, 1.25f, roundStroke);
+    D2D1_ROUNDED_RECT shroud = D2D1::RoundedRect(
+        D2D1::RectF(cx - 6.0f * s, cy - 4.0f * s, cx + 6.0f * s, cy + 4.0f * s), 1.7f * s, 1.7f * s);
+    rt->DrawRoundedRectangle(&shroud, brush, sw, roundStroke);
     // Fan circle on left
-    rt->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx - 1.8f, cy), 2.1f, 2.1f), brush, 1.15f, roundStroke);
+    rt->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx - 1.8f * s, cy), 2.1f * s, 2.1f * s), brush, fw, roundStroke);
+    if (s < 0.92f) {
+        rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx - 1.8f * s, cy), 0.7f * s, 0.7f * s), brush);
+    }
     // Heatsink fins on right
-    rt->DrawLine(D2D1::Point2F(cx + 2.3f, cy - 1.8f), D2D1::Point2F(cx + 2.3f, cy + 1.8f), brush, 1.15f, roundStroke);
-    rt->DrawLine(D2D1::Point2F(cx + 4.0f, cy - 1.2f), D2D1::Point2F(cx + 4.0f, cy + 1.2f), brush, 1.15f, roundStroke);
+    rt->DrawLine(D2D1::Point2F(cx + 2.3f * s, cy - 1.8f * s), D2D1::Point2F(cx + 2.3f * s, cy + 1.8f * s), brush, fw, roundStroke);
+    rt->DrawLine(D2D1::Point2F(cx + 4.0f * s, cy - 1.2f * s), D2D1::Point2F(cx + 4.0f * s, cy + 1.2f * s), brush, fw, roundStroke);
+}
+
+void DrawGoldIcon(ID2D1RenderTarget* rt, ID2D1StrokeStyle* roundStroke, float cx, float cy, ID2D1Brush* brush, float scale) {
+    if (!rt || !brush) return;
+    const float s = std::max(0.5f, scale);
+    const float sw = std::max(1.05f, 1.2f * s);
+    const float topY = cy - 0.8f * s;
+    const float botY = cy + 3.5f * s;
+    const float topHalf = 2.4f * s;
+    const float botHalf = 4.4f * s;
+    // Trapezoid gold ingot silhouette (zero PathGeometry allocation)
+    rt->DrawLine(D2D1::Point2F(cx - topHalf, topY), D2D1::Point2F(cx + topHalf, topY), brush, sw, roundStroke);
+    rt->DrawLine(D2D1::Point2F(cx + topHalf, topY), D2D1::Point2F(cx + botHalf, botY), brush, sw, roundStroke);
+    rt->DrawLine(D2D1::Point2F(cx + botHalf, botY), D2D1::Point2F(cx - botHalf, botY), brush, sw, roundStroke);
+    rt->DrawLine(D2D1::Point2F(cx - botHalf, botY), D2D1::Point2F(cx - topHalf, topY), brush, sw, roundStroke);
+    // Subtle 3-ray luster glint above ingot
+    const float gw = std::max(0.95f, 1.05f * s);
+    rt->DrawLine(D2D1::Point2F(cx, cy - 4.4f * s), D2D1::Point2F(cx, cy - 2.7f * s), brush, gw, roundStroke);
+    rt->DrawLine(D2D1::Point2F(cx - 2.6f * s, cy - 3.6f * s), D2D1::Point2F(cx - 1.6f * s, cy - 2.5f * s), brush, gw, roundStroke);
+    rt->DrawLine(D2D1::Point2F(cx + 2.6f * s, cy - 3.6f * s), D2D1::Point2F(cx + 1.6f * s, cy - 2.5f * s), brush, gw, roundStroke);
 }
 
 void DrawNetIcon(ID2D1RenderTarget* rt, ID2D1StrokeStyle* roundStroke, float cx, float cy, ID2D1Brush* brush) {
