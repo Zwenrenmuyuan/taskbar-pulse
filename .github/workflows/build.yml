@@ -1,0 +1,183 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  LLVM_MINGW_VERSION: "20261020"
+
+jobs:
+  build-windows:
+    name: Build Windows x64 (LLVM-MinGW)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Cache LLVM-MinGW UCRT x64 toolchain
+        id: cache-llvm-mingw
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\llvm-mingw-${{ env.LLVM_MINGW_VERSION }}
+          key: llvm-mingw-ucrt-x86_64-${{ env.LLVM_MINGW_VERSION }}
+
+      - name: Install LLVM-MinGW UCRT x64
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ver = $env:LLVM_MINGW_VERSION
+          $root = Join-Path $env:RUNNER_TEMP "llvm-mingw-$ver"
+          $binDir = Join-Path $root "llvm-mingw-$ver-ucrt-x86_64\bin"
+
+          if (-not (Test-Path (Join-Path $binDir "clang++.exe"))) {
+            $zipName = "llvm-mingw-$ver-ucrt-x86_64.zip"
+            $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/$ver/$zipName"
+            $zipPath = Join-Path $env:RUNNER_TEMP $zipName
+
+            Write-Host "Downloading $url ..."
+            Invoke-WebRequest -Uri $url -OutFile $zipPath
+            New-Item -ItemType Directory -Force -Path $root | Out-Null
+            tar -xf $zipPath -C $root
+            if ($LASTEXITCODE -ne 0) { throw "tar extraction failed with exit code $LASTEXITCODE" }
+            Remove-Item -Force $zipPath
+          }
+
+          if (-not (Test-Path (Join-Path $binDir "clang++.exe"))) {
+            throw "clang++.exe not found in $binDir"
+          }
+
+          Add-Content -Path $env:GITHUB_PATH -Value $binDir
+          Write-Host "Added $binDir to GITHUB_PATH"
+
+      - name: Verify toolchain
+        run: |
+          $ErrorActionPreference = "Stop"
+          clang++ --version
+          if ($LASTEXITCODE -ne 0) { throw "clang++ check failed" }
+          Get-Command llvm-rc | Select-Object Source
+
+      - name: Build TaskbarMonitor.exe
+        run: |
+          $ErrorActionPreference = "Stop"
+          .\build.ps1
+
+      - name: Build and run unit tests
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          clang++ -std=c++20 -O2 -Wall -Wextra -Isrc tests/animator_test.cpp -o build/animator_test.exe
+          if ($LASTEXITCODE -ne 0) { throw "animator_test build failed" }
+          .\build\animator_test.exe
+          if ($LASTEXITCODE -ne 0) { throw "animator_test failed" }
+
+          clang++ -std=c++20 -O2 -Wall -Wextra -Isrc tests/placement_test.cpp -o build/placement_test.exe
+          if ($LASTEXITCODE -ne 0) { throw "placement_test build failed" }
+          .\build\placement_test.exe
+          if ($LASTEXITCODE -ne 0) { throw "placement_test failed" }
+
+          clang++ -std=c++20 -O2 -Wall -Wextra -Isrc tests/config_test.cpp src/core/config.cpp -o build/config_test.exe -lshell32 -lole32 -luuid -ladvapi32
+          if ($LASTEXITCODE -ne 0) { throw "config_test build failed" }
+          .\build\config_test.exe
+          if ($LASTEXITCODE -ne 0) { throw "config_test failed" }
+
+      - name: Generate SHA256 checksum
+        run: |
+          $ErrorActionPreference = "Stop"
+          $hash = (Get-FileHash -Path "build\TaskbarMonitor.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  TaskbarMonitor.exe" | Set-Content -Path "build\SHA256SUMS.txt" -Encoding ascii
+          Get-Content "build\SHA256SUMS.txt"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TaskbarMonitor-win64
+          path: |
+            build/TaskbarMonitor.exe
+            build/SHA256SUMS.txt
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $OutputEncoding = [System.Text.Encoding]::UTF8
+          $exe = "build/TaskbarMonitor.exe"
+          $sums = "build/SHA256SUMS.txt"
+
+          if ($env:GITHUB_REF -like "refs/tags/v*") {
+            $tag = $env:GITHUB_REF_NAME
+            $ErrorActionPreference = "Continue"
+            gh release view $tag *> $null
+            $releaseExists = ($LASTEXITCODE -eq 0)
+            $ErrorActionPreference = "Stop"
+
+            if ($releaseExists) {
+              gh release upload $tag $exe $sums --clobber
+              if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
+            } else {
+              gh release create $tag $exe $sums --title $tag --generate-notes
+              if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
+            }
+          } else {
+            $shortSha = $env:GITHUB_SHA.Substring(0, 7)
+            $commitMsg = (git -c core.quotepath=false log -1 --pretty=%s).Trim()
+            $builtAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm 'UTC'")
+            $hashLine = (Get-Content $sums -Raw).Trim()
+            $sizeKb = [Math]::Round((Get-Item $exe).Length / 1KB, 1)
+            $bt = '`'
+            $notesPath = Join-Path (Get-Location) "build\release_notes.md"
+
+            $notes = @(
+              "Automated Windows 11 x64 build from ${bt}main${bt} (${bt}$shortSha${bt}).",
+              "",
+              "- **Commit**: $commitMsg",
+              "- **Built**: $builtAt",
+              "- **Size**: $sizeKb KB (statically linked, single ${bt}.exe${bt})",
+              "- **Config**: ${bt}%USERPROFILE%\.config\taskbar-pulse\config.ini${bt}",
+              "",
+              "### SHA256",
+              "${bt}${bt}${bt}text",
+              $hashLine,
+              "${bt}${bt}${bt}"
+            ) -join "`n"
+            [System.IO.File]::WriteAllText($notesPath, $notes, [System.Text.UTF8Encoding]::new($false))
+
+            git push --force origin "HEAD:refs/tags/latest"
+            if ($LASTEXITCODE -ne 0) { throw "Failed to update latest tag" }
+
+            $ErrorActionPreference = "Continue"
+            gh release view latest *> $null
+            $releaseExists = ($LASTEXITCODE -eq 0)
+            $ErrorActionPreference = "Stop"
+
+            if ($releaseExists) {
+              gh release upload latest $exe $sums --clobber
+              if ($LASTEXITCODE -ne 0) { throw "gh release upload failed" }
+              gh release edit latest --title "Latest Build ($shortSha)" --notes-file $notesPath
+              if ($LASTEXITCODE -ne 0) { throw "gh release edit failed" }
+            } else {
+              gh release create latest $exe $sums --title "Latest Build ($shortSha)" --notes-file $notesPath
+              if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
+            }
+          }

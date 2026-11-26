@@ -6,6 +6,8 @@
 #endif
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <shlobj.h>
+#include <knownfolders.h>
 
 #include "core/config.hpp"
 #include <algorithm>
@@ -19,6 +21,43 @@ constexpr wchar_t kOffsetsSection[] = L"MonitorOffsets";
 constexpr wchar_t kRunRegPath[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 constexpr wchar_t kRunValueName[] = L"Win11TaskbarMonitor";
 constexpr wchar_t kThemeRegPath[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
+constexpr wchar_t kConfigSubPath[] = L"\\.config\\taskbar-pulse\\config.ini";
+
+std::wstring GetUserProfileDir() {
+    DWORD needed = GetEnvironmentVariableW(L"USERPROFILE", nullptr, 0);
+    if (needed > 1) {
+        std::wstring buf(needed, L'\0');
+        DWORD got = GetEnvironmentVariableW(L"USERPROFILE", buf.data(), needed);
+        if (got > 0 && got < needed) {
+            buf.resize(got);
+            while (!buf.empty() && (buf.back() == L'\\' || buf.back() == L'/')) {
+                buf.pop_back();
+            }
+            if (!buf.empty()) return buf;
+        }
+    }
+
+    PWSTR knownPath = nullptr;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Profile, 0, nullptr, &knownPath)) && knownPath) {
+        std::wstring dir(knownPath);
+        CoTaskMemFree(knownPath);
+        while (!dir.empty() && (dir.back() == L'\\' || dir.back() == L'/')) {
+            dir.pop_back();
+        }
+        if (!dir.empty()) return dir;
+    }
+    return {};
+}
+
+void EnsureParentDirectory(const std::wstring& filePath) {
+    auto pos = filePath.find_last_of(L"\\/");
+    if (pos == std::wstring::npos || pos == 0) return;
+    std::wstring dir = filePath.substr(0, pos);
+    for (wchar_t& ch : dir) {
+        if (ch == L'/') ch = L'\\';
+    }
+    SHCreateDirectoryExW(nullptr, dir.c_str(), nullptr);
+}
 } // namespace
 
 std::wstring SanitizeMonitorKey(const std::wstring& deviceName) {
@@ -76,46 +115,63 @@ std::wstring GetExePath() {
 }
 
 std::wstring GetConfigIniPath() {
+    std::wstring profile = GetUserProfileDir();
+    if (!profile.empty()) {
+        return profile + kConfigSubPath;
+    }
     std::wstring exe = GetExePath();
     auto pos = exe.find_last_of(L"\\/");
-    if (pos == std::wstring::npos) return L"TaskbarMonitor.ini";
-    return exe.substr(0, pos + 1) + L"TaskbarMonitor.ini";
+    if (pos == std::wstring::npos) return L"config.ini";
+    return exe.substr(0, pos + 1) + L"config.ini";
 }
 
-AppConfig LoadConfig() {
-    AppConfig cfg;
-    std::wstring path = GetConfigIniPath();
+AppConfig LoadConfigFromPath(const std::wstring& path) {
+    const AppConfig defaults{};
+    AppConfig cfg = defaults;
 
-    int style = static_cast<int>(GetPrivateProfileIntW(kSection, L"VisualStyle", 0, path.c_str()));
-    cfg.style = (style == 1) ? VisualStyle::Minimal : VisualStyle::Capsule;
+    int style = static_cast<int>(GetPrivateProfileIntW(
+        kSection, L"VisualStyle", static_cast<INT>(defaults.style), path.c_str()));
+    if (style == static_cast<int>(VisualStyle::Capsule)) cfg.style = VisualStyle::Capsule;
+    else if (style == static_cast<int>(VisualStyle::Minimal)) cfg.style = VisualStyle::Minimal;
+    else cfg.style = defaults.style;
 
-    int theme = static_cast<int>(GetPrivateProfileIntW(kSection, L"ThemeMode", 0, path.c_str()));
-    if (theme == 1) cfg.theme = ThemeMode::Light;
-    else if (theme == 2) cfg.theme = ThemeMode::Dark;
-    else cfg.theme = ThemeMode::Auto;
+    int theme = static_cast<int>(GetPrivateProfileIntW(
+        kSection, L"ThemeMode", static_cast<INT>(defaults.theme), path.c_str()));
+    if (theme == static_cast<int>(ThemeMode::Light)) cfg.theme = ThemeMode::Light;
+    else if (theme == static_cast<int>(ThemeMode::Dark)) cfg.theme = ThemeMode::Dark;
+    else if (theme == static_cast<int>(ThemeMode::Auto)) cfg.theme = ThemeMode::Auto;
+    else cfg.theme = defaults.theme;
 
-    cfg.showMiniBars = GetPrivateProfileIntW(kSection, L"ShowMiniBars", 1, path.c_str()) != 0;
+    cfg.showMiniBars = GetPrivateProfileIntW(
+        kSection, L"ShowMiniBars", defaults.showMiniBars ? 1 : 0, path.c_str()) != 0;
 
-    int r2c1 = static_cast<int>(GetPrivateProfileIntW(kSection, L"Row2Col1Mode", 0, path.c_str()));
-    if (r2c1 == 1) cfg.row2Col1 = Row2Col1Mode::MemPct;
-    else if (r2c1 == 2) cfg.row2Col1 = Row2Col1Mode::Hide;
-    else if (r2c1 == 3) cfg.row2Col1 = Row2Col1Mode::CpuTemp;
-    else cfg.row2Col1 = Row2Col1Mode::CpuFreq;
+    int r2c1 = static_cast<int>(GetPrivateProfileIntW(
+        kSection, L"Row2Col1Mode", static_cast<INT>(defaults.row2Col1), path.c_str()));
+    if (r2c1 == static_cast<int>(Row2Col1Mode::CpuFreq)) cfg.row2Col1 = Row2Col1Mode::CpuFreq;
+    else if (r2c1 == static_cast<int>(Row2Col1Mode::MemPct)) cfg.row2Col1 = Row2Col1Mode::MemPct;
+    else if (r2c1 == static_cast<int>(Row2Col1Mode::Hide)) cfg.row2Col1 = Row2Col1Mode::Hide;
+    else if (r2c1 == static_cast<int>(Row2Col1Mode::CpuTemp)) cfg.row2Col1 = Row2Col1Mode::CpuTemp;
+    else cfg.row2Col1 = defaults.row2Col1;
 
-    cfg.showGpuTemp = GetPrivateProfileIntW(kSection, L"ShowGpuTemp", 1, path.c_str()) != 0;
-    cfg.showGoldPrice = GetPrivateProfileIntW(kSection, L"ShowGoldPrice", 1, path.c_str()) != 0;
+    cfg.showGpuTemp = GetPrivateProfileIntW(
+        kSection, L"ShowGpuTemp", defaults.showGpuTemp ? 1 : 0, path.c_str()) != 0;
+    cfg.showGoldPrice = GetPrivateProfileIntW(
+        kSection, L"ShowGoldPrice", defaults.showGoldPrice ? 1 : 0, path.c_str()) != 0;
 
-    int refresh = static_cast<int>(GetPrivateProfileIntW(kSection, L"RefreshMs", 1000, path.c_str()));
+    int refresh = static_cast<int>(GetPrivateProfileIntW(
+        kSection, L"RefreshMs", defaults.refreshMs, path.c_str()));
     cfg.refreshMs = std::clamp(refresh, 250, 10000);
 
     wchar_t offsetBuf[32]{};
-    GetPrivateProfileStringW(kSection, L"OffsetXDip", L"0", offsetBuf, 32, path.c_str());
+    GetPrivateProfileStringW(kSection, L"OffsetXDip", L"0", offsetBuf, _countof(offsetBuf), path.c_str());
     cfg.offsetXDip = _wtoi(offsetBuf);
 
-    int dispMode = static_cast<int>(GetPrivateProfileIntW(kSection, L"DisplayMode", 0, path.c_str()));
-    if (dispMode == 1) cfg.displayMode = DisplayTargetMode::Primary;
-    else if (dispMode == 2) cfg.displayMode = DisplayTargetMode::Specific;
-    else cfg.displayMode = DisplayTargetMode::All;
+    int dispMode = static_cast<int>(GetPrivateProfileIntW(
+        kSection, L"DisplayMode", static_cast<INT>(defaults.displayMode), path.c_str()));
+    if (dispMode == static_cast<int>(DisplayTargetMode::All)) cfg.displayMode = DisplayTargetMode::All;
+    else if (dispMode == static_cast<int>(DisplayTargetMode::Primary)) cfg.displayMode = DisplayTargetMode::Primary;
+    else if (dispMode == static_cast<int>(DisplayTargetMode::Specific)) cfg.displayMode = DisplayTargetMode::Specific;
+    else cfg.displayMode = defaults.displayMode;
 
     wchar_t devBuf[128]{};
     GetPrivateProfileStringW(kSection, L"DisplayDevice", L"", devBuf, _countof(devBuf), path.c_str());
@@ -144,8 +200,8 @@ AppConfig LoadConfig() {
     return cfg;
 }
 
-void SaveConfig(const AppConfig& cfg) {
-    std::wstring path = GetConfigIniPath();
+void SaveConfigToPath(const AppConfig& cfg, const std::wstring& path) {
+    EnsureParentDirectory(path);
     auto writeInt = [&](const wchar_t* key, int val) {
         wchar_t buf[32];
         _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"%d", val);
@@ -171,6 +227,14 @@ void SaveConfig(const AppConfig& cfg) {
         _snwprintf_s(buf, _countof(buf), _TRUNCATE, L"%d", kv.second);
         WritePrivateProfileStringW(kOffsetsSection, kv.first.c_str(), buf, path.c_str());
     }
+}
+
+AppConfig LoadConfig() {
+    return LoadConfigFromPath(GetConfigIniPath());
+}
+
+void SaveConfig(const AppConfig& cfg) {
+    SaveConfigToPath(cfg, GetConfigIniPath());
 }
 
 namespace {

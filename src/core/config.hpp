@@ -28,15 +28,15 @@ enum class DisplayTargetMode : int {
 };
 
 struct AppConfig {
-    VisualStyle style = VisualStyle::Capsule;
+    VisualStyle style = VisualStyle::Minimal;
     ThemeMode theme = ThemeMode::Auto;
     bool showMiniBars = true;
-    Row2Col1Mode row2Col1 = Row2Col1Mode::CpuFreq;
+    Row2Col1Mode row2Col1 = Row2Col1Mode::CpuTemp;
     bool showGpuTemp = true;
     bool showGoldPrice = true;
     int refreshMs = 1000;
     int offsetXDip = 0;
-    DisplayTargetMode displayMode = DisplayTargetMode::All;
+    DisplayTargetMode displayMode = DisplayTargetMode::Primary;
     std::wstring displayDevice;
     std::map<std::wstring, int> secondaryOffsetsDip;
 };
@@ -48,6 +48,8 @@ void ResetAllMonitorOffsets(AppConfig& cfg);
 
 std::wstring GetExePath();
 std::wstring GetConfigIniPath();
+AppConfig LoadConfigFromPath(const std::wstring& path);
+void SaveConfigToPath(const AppConfig& cfg, const std::wstring& path);
 AppConfig LoadConfig();
 void SaveConfig(const AppConfig& cfg);
 

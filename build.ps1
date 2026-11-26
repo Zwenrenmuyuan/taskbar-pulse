@@ -1,7 +1,17 @@
 $ErrorActionPreference = "Stop"
 
-# Refresh PATH from Machine + User environment in case LLVM-MinGW was just installed
-$env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+# Preserve current session PATH (e.g. CI GITHUB_PATH) while appending fresh Machine/User PATH entries
+$existingParts = @($env:Path -split ';' | Where-Object { $_ -ne '' })
+$regParts = @(
+    ([Environment]::GetEnvironmentVariable("Path", "Machine") -split ';'),
+    ([Environment]::GetEnvironmentVariable("Path", "User") -split ';')
+) | ForEach-Object { $_ } | Where-Object { $_ -ne '' }
+$seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+$merged = [System.Collections.Generic.List[string]]::new()
+foreach ($p in ($existingParts + $regParts)) {
+    if ($seen.Add($p)) { $merged.Add($p) }
+}
+$env:Path = ($merged -join ';')
 
 $root = $PSScriptRoot
 $buildDir = Join-Path $root "build"
