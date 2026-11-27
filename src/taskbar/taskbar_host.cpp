@@ -3,10 +3,10 @@
 #define NTDDI_VERSION 0x0A000000
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <dwmapi.h>
 #include <shellapi.h>
 
 #include "taskbar/taskbar_host.hpp"
-#include "taskbar/placement.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cwchar>
@@ -84,15 +84,18 @@ std::map<std::wstring, std::wstring> QueryMonitorFriendlyNames() {
     return names;
 }
 
-bool IsFullscreenCoveringTaskbar(HWND hTaskbar, const std::vector<HWND>& ownWindows,
-                                 HMONITOR hTbMon, const RECT& rcMon) {
-    HWND fg = GetForegroundWindow();
-    if (!fg || fg == hTaskbar) return false;
-    if (std::find(ownWindows.begin(), ownWindows.end(), fg) != ownWindows.end()) return false;
-    if (!IsWindowVisible(fg) || IsIconic(fg)) return false;
+bool IsFullscreenCandidate(HWND hwnd, const std::vector<HWND>& ownWindows) {
+    if (!IsWindowVisible(hwnd) || IsIconic(hwnd)) return false;
+    if (std::find(ownWindows.begin(), ownWindows.end(), hwnd) != ownWindows.end()) return false;
+
+    // Maximized windows with a title bar can fill the work area when the
+    // taskbar is auto-hidden.
+    if (IsZoomed(hwnd) && (GetWindowLongPtrW(hwnd, GWL_STYLE) & WS_CAPTION) == WS_CAPTION) {
+        return false;
+    }
 
     wchar_t cls[64]{};
-    if (GetClassNameW(fg, cls, _countof(cls)) > 0) {
+    if (GetClassNameW(hwnd, cls, _countof(cls)) > 0) {
         if (wcscmp(cls, L"Progman") == 0 ||
             wcscmp(cls, L"WorkerW") == 0 ||
             wcscmp(cls, L"Shell_TrayWnd") == 0 ||
@@ -101,34 +104,41 @@ bool IsFullscreenCoveringTaskbar(HWND hTaskbar, const std::vector<HWND>& ownWind
         }
     }
 
+    DWORD cloaked = 0;
+    return FAILED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) || cloaked == 0;
+}
+
+bool CoversMonitor(const RECT& bounds, const RECT& monitor) {
+    return bounds.left <= monitor.left && bounds.top <= monitor.top &&
+           bounds.right >= monitor.right && bounds.bottom >= monitor.bottom;
+}
+
+bool IsFullscreenOnMonitor(HWND hwnd, const std::vector<HWND>& ownWindows, const RECT& monitor) {
+    RECT bounds{};
+    if (!GetWindowRect(hwnd, &bounds) || !CoversMonitor(bounds, monitor) ||
+        !IsFullscreenCandidate(hwnd, ownWindows)) return false;
+
+    RECT frame{};
+    return FAILED(DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &frame, sizeof(frame))) ||
+           IsRectEmpty(&frame) || CoversMonitor(frame, monitor);
+}
+
+bool IsFullscreenCoveringTaskbar(HWND hTaskbar, const std::vector<HWND>& ownWindows,
+                                 HMONITOR hTbMon, const RECT& rcMon) {
+    // A fullscreen window can stay above this taskbar while another display
+    // has keyboard focus.
+    for (HWND hwnd = GetWindow(hTaskbar, GW_HWNDPREV); hwnd && hwnd != hTaskbar;
+         hwnd = GetWindow(hwnd, GW_HWNDPREV)) {
+        if (IsFullscreenOnMonitor(hwnd, ownWindows, rcMon)) return true;
+    }
+
+    // The shell's exclusive-mode state is global. Confirm which display it
+    // applies to even when the fullscreen window bypasses desktop Z order.
+    HWND fg = GetForegroundWindow();
     QUERY_USER_NOTIFICATION_STATE state{};
-    if (SUCCEEDED(SHQueryUserNotificationState(&state)) &&
-        state == QUNS_RUNNING_D3D_FULL_SCREEN) {
-        HMONITOR hFgMon = MonitorFromWindow(fg, MONITOR_DEFAULTTONULL);
-        if (!hFgMon || hFgMon == hTbMon) {
-            return true;
-        }
-    }
-
-    RECT rcFg{};
-    if (!GetWindowRect(fg, &rcFg)) return false;
-
-    if (rcFg.left > rcMon.left ||
-        rcFg.top > rcMon.top ||
-        rcFg.right < rcMon.right ||
-        rcFg.bottom < rcMon.bottom) {
-        return false;
-    }
-
-    // Regular maximized windows (with title bar) can extend past monitor edges
-    // via invisible DWM borders when the taskbar is auto-hidden; do not treat
-    // them as fullscreen apps.
-    if (IsZoomed(fg) &&
-        (GetWindowLongPtrW(fg, GWL_STYLE) & WS_CAPTION) == WS_CAPTION) {
-        return false;
-    }
-
-    return true;
+    return fg && fg != hTaskbar && MonitorFromWindow(fg, MONITOR_DEFAULTTONULL) == hTbMon &&
+           SUCCEEDED(SHQueryUserNotificationState(&state)) && state == QUNS_RUNNING_D3D_FULL_SCREEN &&
+           IsFullscreenOnMonitor(fg, ownWindows, rcMon);
 }
 
 bool IsWindowBelowInZOrder(HWND target, HWND reference) {
@@ -463,7 +473,7 @@ TaskbarPlacement TaskbarHost::ComputePlacementForTaskbar(
     for (const auto& rect : occupiedRects) occupied.push_back({ rect.left, rect.right });
 
     auto freeX = FindFreeTaskbarPosition(visibleTaskbar.left + edgePx,
-        rightBound, wPx, defaultX + offsetPx, gapPx, std::move(occupied));
+        rightBound, wPx, defaultX + offsetPx, gapPx, std::move(occupied), &p.freeSpanPx);
     // Keep the tray entry available when no safe interval fits. Do not overwrite
     // the user's preferred offset: it should recover when the larger screen returns.
     if (!freeX) return p;

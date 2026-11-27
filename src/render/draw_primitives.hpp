@@ -20,7 +20,7 @@ void DrawVectorArrow(ID2D1RenderTarget* rt, ID2D1StrokeStyle* roundStroke, float
 void DrawMiniBar(ID2D1RenderTarget* rt, float x, float y, float w, float h, double pct, ID2D1Brush* trackBrush, ID2D1Brush* fillBrush);
 void DrawSegmentedMeter(ID2D1RenderTarget* rt, float x, float y, float w, float h, double pct, int segments,
     const D2D1_COLOR_F& trackCol, const D2D1_COLOR_F& fillCol, ID2D1SolidColorBrush* brush,
-    float gap = 2.4f, bool forceFirstLit = false);
+    float gap = 2.4f);
 void DrawToggleSwitch(ID2D1RenderTarget* rt, float x, float y, float w, float h, float progress,
     const D2D1_COLOR_F& offTrack, const D2D1_COLOR_F& onTrack, const D2D1_COLOR_F& offThumb,
     const D2D1_COLOR_F& onThumb, ID2D1SolidColorBrush* brush);

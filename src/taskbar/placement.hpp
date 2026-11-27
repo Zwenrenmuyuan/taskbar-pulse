@@ -10,11 +10,11 @@ struct HorizontalSpan {
     int right;
 };
 
-// Pick the nearest position that fits entirely in a free interval. All inputs
-// are physical screen pixels, including negative coordinates on other monitors.
+// Pick the nearest position that fits entirely in a free interval. On success,
+// also return that interval if requested. All coordinates are screen pixels.
 inline std::optional<int> FindFreeTaskbarPosition(
     int left, int right, int width, int preferredX, int gap,
-    std::vector<HorizontalSpan> occupied) {
+    std::vector<HorizontalSpan> occupied, HorizontalSpan* freeSpan = nullptr) {
     if (width <= 0 || right - left < width) return std::nullopt;
     std::sort(occupied.begin(), occupied.end(), [](const auto& a, const auto& b) {
         return a.left < b.left;
@@ -30,6 +30,7 @@ inline std::optional<int> FindFreeTaskbarPosition(
         if (distance < bestDistance) {
             best = x;
             bestDistance = distance;
+            if (freeSpan) *freeSpan = {begin, end};
         }
     };
 

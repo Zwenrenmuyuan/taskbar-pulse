@@ -102,8 +102,13 @@ void RenderEngine::DrawFlyoutContent(
     const bool sheetInteractive = (slide >= 0.5f && sheetT >= 0.5f);
     const bool overviewInteractive = (slide < 0.5f);
     const bool settingsInteractive = (slide >= 0.5f && !sheetInteractive);
+    const D2D1_RECT_F pageClip = D2D1::RectF(1.0f, 1.0f, innerW - 1.0f, innerH - 1.0f);
 
-    auto toHitRect = [&](float x1, float y1, float x2, float y2) -> RECT {
+    auto toHitRect = [&](float pageOffX, float x1, float y1, float x2, float y2) -> RECT {
+        x1 = std::clamp(x1 + pageOffX, pageClip.left, pageClip.right);
+        x2 = std::clamp(x2 + pageOffX, pageClip.left, pageClip.right);
+        y1 = std::clamp(y1, pageClip.top, pageClip.bottom);
+        y2 = std::clamp(y2, pageClip.top, pageClip.bottom);
         return RECT{
             static_cast<LONG>(std::lround((padX + x1) * scale)),
             static_cast<LONG>(std::lround((padTop + y1) * scale)),
@@ -126,7 +131,7 @@ void RenderEngine::DrawFlyoutContent(
     };
 
     // Clip sliding pages cleanly inside inner panel bounds
-    rt->PushAxisAlignedClip(D2D1::RectF(1.0f, 1.0f, innerW - 1.0f, innerH - 1.0f), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    rt->PushAxisAlignedClip(pageClip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
     // =========================================================================
     // PAGE 0: B1 SWISS INSTRUMENT OVERVIEW
@@ -163,7 +168,7 @@ void RenderEngine::DrawFlyoutContent(
             DrawGearIcon(rt, m_roundStroke, (gx1 + gx2) * 0.5f, (gy1 + gy2) * 0.5f, brMain);
 
             if (overviewInteractive) {
-                outHitMap.controls[static_cast<int>(FlyoutControl::GearBtn)] = toHitRect(gx1, gy1, gx2, gy2);
+                outHitMap.controls[static_cast<int>(FlyoutControl::GearBtn)] = toHitRect(pageOffX, gx1, gy1, gx2, gy2);
             }
         }
 
@@ -177,7 +182,7 @@ void RenderEngine::DrawFlyoutContent(
                 rt->FillRoundedRectangle(&rr, brMain);
             }
             if (overviewInteractive) {
-                outHitMap.overviewRows[rowIdx] = toHitRect(8.0f, y1, innerW - 8.0f, y2);
+                outHitMap.overviewRows[rowIdx] = toHitRect(pageOffX, 8.0f, y1, innerW - 8.0f, y2);
             }
         };
 
@@ -458,7 +463,7 @@ void RenderEngine::DrawFlyoutContent(
             brMain->SetColor(anim::LerpColor(pal.label, pal.labelStrong, std::max(bh, bp)));
             DrawBackChevronIcon(rt, m_roundStroke, (bx1 + bx2) * 0.5f, (by1 + by2) * 0.5f, brMain);
             if (settingsInteractive) {
-                outHitMap.controls[static_cast<int>(FlyoutControl::BackBtn)] = toHitRect(bx1, by1, bx2, by2);
+                outHitMap.controls[static_cast<int>(FlyoutControl::BackBtn)] = toHitRect(pageOffX, bx1, by1, bx2, by2);
             }
 
             brMain->SetColor(pal.labelStrong);
@@ -511,7 +516,7 @@ void RenderEngine::DrawFlyoutContent(
                 DrawTextFormatted(rt, opts[i], m_fmtFlyBtn, D2D1::RectF(ox1, oy1, ox2, oy2), brAux, true);
 
                 if (settingsInteractive) {
-                    outHitMap.controls[static_cast<int>(ctrls[i])] = toHitRect(ox1, sy1, ox2, sy2);
+                    outHitMap.controls[static_cast<int>(ctrls[i])] = toHitRect(pageOffX, ox1, sy1, ox2, sy2);
                 }
             }
         };
@@ -635,7 +640,7 @@ void RenderEngine::DrawFlyoutContent(
                     pal.trackBg, pal.accentCpu, offThumb, onThumb, brMain);
 
                 if (settingsInteractive) {
-                    outHitMap.controls[static_cast<int>(rows[i].ctrl)] = toHitRect(14.0f, ry, innerW - 14.0f, ry + kRowH);
+                    outHitMap.controls[static_cast<int>(rows[i].ctrl)] = toHitRect(pageOffX, 14.0f, ry, innerW - 14.0f, ry + kRowH);
                 }
             }
         }
@@ -660,7 +665,7 @@ void RenderEngine::DrawFlyoutContent(
                 brAux->SetColor(txt);
                 DrawTextFormatted(rt, label, m_fmtFlyBtn, D2D1::RectF(x1, y1, x2, y2), brAux, false);
                 if (settingsInteractive) {
-                    outHitMap.controls[static_cast<int>(c)] = toHitRect(x1, y1, x2, y2);
+                    outHitMap.controls[static_cast<int>(c)] = toHitRect(pageOffX, x1, y1, x2, y2);
                 }
             };
 
@@ -746,9 +751,9 @@ void RenderEngine::DrawFlyoutContent(
             const float listTop = sy1 + kHeaderH;
             const float listBot = listTop + listH;
             if (sheetInteractive) {
-                outHitMap.sheetCard = toHitRect(sx1, sy1, sx2, sy2);
-                outHitMap.sheetListViewport = toHitRect(sx1 + 2.0f, listTop, sx2 - 2.0f, listBot);
-                outHitMap.controls[static_cast<int>(FlyoutControl::SheetCloseBtn)] = toHitRect(cx1, cy1, cx2, cy2);
+                outHitMap.sheetCard = toHitRect(pageOffX, sx1, sy1, sx2, sy2);
+                outHitMap.sheetListViewport = toHitRect(pageOffX, sx1 + 2.0f, listTop, sx2 - 2.0f, listBot);
+                outHitMap.controls[static_cast<int>(FlyoutControl::SheetCloseBtn)] = toHitRect(pageOffX, cx1, cy1, cx2, cy2);
                 outHitMap.sheetItemRects.assign(displayOpts.items.size(), RECT{});
             }
 
@@ -832,7 +837,7 @@ void RenderEngine::DrawFlyoutContent(
                     float hitTop = std::max(ry + 1.0f, listTop);
                     float hitBot = std::min(ry + kItemH - 1.0f, listBot);
                     if (hitBot > hitTop + 2.0f) {
-                        outHitMap.sheetItemRects[i] = toHitRect(sx1 + 6.0f, hitTop, rowRight, hitBot);
+                        outHitMap.sheetItemRects[i] = toHitRect(pageOffX, sx1 + 6.0f, hitTop, rowRight, hitBot);
                     }
                 }
             }

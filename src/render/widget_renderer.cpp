@@ -106,8 +106,12 @@ void RenderEngine::DrawWidgetContent(
     const float yBar = dim.heightDip - barH - (capsule ? 3.2f : 2.6f);
 
     const double dispCpuPct = anim.initialized ? anim.cpuPct : snap.cpuPercent;
-    const double dispGpuPct = anim.initialized ? anim.gpuPct : (snap.hasGpuUsage ? snap.gpuPercent : 0.0);
-    const double dispVramPct = anim.initialized ? anim.vramPct : (snap.hasVram ? snap.vramPercent : 0.0);
+    // GPU and VRAM display whole percentages. Clear their meters as soon as
+    // the readout reaches zero, including while an earlier reading fades out.
+    const double dispGpuPct = (snap.hasGpuUsage && std::nearbyint(snap.gpuPercent) > 0.0)
+        ? (anim.initialized ? anim.gpuPct : snap.gpuPercent) : 0.0;
+    const double dispVramPct = (snap.hasVram && std::nearbyint(snap.vramPercent) > 0.0)
+        ? (anim.initialized ? anim.vramPct : snap.vramPercent) : 0.0;
     const double dispRamPct = anim.initialized ? anim.ramPct : snap.ramPercent;
 
     wchar_t valBuf[48]{};
@@ -158,7 +162,7 @@ void RenderEngine::DrawWidgetContent(
         }
 
         if (showBars) {
-            DrawSegmentedMeter(rt, c.x, yBar, c.w, barH, dispCpuPct, 10, pal.trackBg, cpuSigCol, brMain, 1.6f, true);
+            DrawSegmentedMeter(rt, c.x, yBar, c.w, barH, dispCpuPct, 10, pal.trackBg, cpuSigCol, brMain, 1.6f);
         }
     }
 
@@ -191,8 +195,8 @@ void RenderEngine::DrawWidgetContent(
         }
 
         if (showBars) {
-            DrawSegmentedMeter(rt, c.x, yBar, c.w, barH, snap.hasGpuUsage ? dispGpuPct : 0.0, 9,
-                pal.trackBg, snap.hasGpuUsage ? gpuSigCol : pal.muted, brMain, 1.6f, snap.hasGpuUsage);
+            DrawSegmentedMeter(rt, c.x, yBar, c.w, barH, dispGpuPct, 9,
+                pal.trackBg, gpuSigCol, brMain, 1.6f);
         }
     }
 
@@ -235,10 +239,10 @@ void RenderEngine::DrawWidgetContent(
 
         if (showBars) {
             const float halfW = (c.w - 6.0f) * 0.5f;
-            DrawSegmentedMeter(rt, c.x, yBar, halfW, barH, snap.hasVram ? dispVramPct : 0.0, 7,
-                pal.trackBg, vramSigCol, brMain, 1.6f, snap.hasVram);
+            DrawSegmentedMeter(rt, c.x, yBar, halfW, barH, dispVramPct, 7,
+                pal.trackBg, vramSigCol, brMain, 1.6f);
             DrawSegmentedMeter(rt, c.x + halfW + 6.0f, yBar, halfW, barH, dispRamPct, 7,
-                pal.trackBg, ramSigCol, brMain, 1.6f, true);
+                pal.trackBg, ramSigCol, brMain, 1.6f);
         }
     }
 

@@ -115,7 +115,9 @@ jobs:
           retention-days: 30
 
       - name: Publish GitHub Release
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: >-
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+          (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -125,7 +127,7 @@ jobs:
           $exe = "build/TaskbarMonitor.exe"
           $sums = "build/SHA256SUMS.txt"
 
-          if ($env:GITHUB_REF -like "refs/tags/v*") {
+          if ($env:GITHUB_REF -clike "refs/tags/v*") {
             $tag = $env:GITHUB_REF_NAME
             $ErrorActionPreference = "Continue"
             gh release view $tag *> $null
@@ -139,7 +141,7 @@ jobs:
               gh release create $tag $exe $sums --title $tag --generate-notes
               if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
             }
-          } else {
+          } elseif ($env:GITHUB_REF -ceq "refs/heads/main") {
             $shortSha = $env:GITHUB_SHA.Substring(0, 7)
             $commitMsg = (git -c core.quotepath=false log -1 --pretty=%s).Trim()
             $builtAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm 'UTC'")

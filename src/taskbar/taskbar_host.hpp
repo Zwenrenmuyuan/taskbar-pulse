@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 #include "core/config.hpp"
+#include "taskbar/placement.hpp"
 #include "taskbar/taskbar_layout.hpp"
 
 struct TaskbarInfo {
@@ -35,6 +36,7 @@ struct TaskbarPlacement {
     POINT ptWidget{};
     POINT ptWidgetClient{};
     SIZE szWidget{};
+    HorizontalSpan freeSpanPx{};
     RECT rcTaskbar{};
     RECT rcMonitor{};
 };

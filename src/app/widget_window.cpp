@@ -187,9 +187,8 @@ void SyncWidgetPlacement(AppState* app, bool forceRender) {
             p.dpi != prevP.dpi;
         bool changedX = !prevP.valid || p.ptWidgetClient.x != prevP.ptWidgetClient.x;
 
-        w->lastPlacement = p;
-
         if (!p.valid || !p.shouldShow) {
+            w->lastPlacement = p;
             if (w->visible) {
                 w->visible = false;
                 w->hasAnimX = false;
@@ -198,23 +197,25 @@ void SyncWidgetPlacement(AppState* app, bool forceRender) {
             continue;
         }
 
-        int dx = prevP.valid ? std::abs(p.ptWidgetClient.x - prevP.ptWidgetClient.x) : 0;
-        bool canGlideX = prevVis && !w->draggingOffset && !changedSizeOrDpiOrY && changedX && dx > 0 && dx <= 900;
-
-        if (canGlideX) {
-            if (!w->hasAnimX) {
-                w->animX = static_cast<float>(prevP.ptWidgetClient.x);
+        const float targetX = static_cast<float>(p.ptWidgetClient.x);
+        const bool movingX = w->hasAnimX && w->animX != targetX;
+        if (!prevVis || changedSizeOrDpiOrY || changedX || movingX) {
+            // Check the actual window, since layout can change while a glide
+            // is still in progress toward the same target.
+            RECT current{};
+            const bool canGlideX = prevVis && w->hasAnimX && !w->draggingOffset && !changedSizeOrDpiOrY &&
+                GetWindowRect(w->hwnd, &current) && std::abs(p.ptWidget.x - current.left) <= 900 &&
+                current.left >= p.freeSpanPx.left && current.right <= p.freeSpanPx.right;
+            if (canGlideX) {
+                RequestAnimationFrame(app);
+            } else {
+                if (!SetWindowPos(w->hwnd, HWND_TOP, p.ptWidgetClient.x, p.ptWidgetClient.y,
+                        p.szWidget.cx, p.szWidget.cy, SWP_NOACTIVATE | SWP_NOREDRAW)) continue;
+                w->animX = targetX;
                 w->hasAnimX = true;
             }
-            RequestAnimationFrame(app);
-        } else if (!prevVis || changedSizeOrDpiOrY || changedX) {
-            SetWindowPos(w->hwnd, HWND_TOP,
-                p.ptWidgetClient.x, p.ptWidgetClient.y,
-                p.szWidget.cx, p.szWidget.cy,
-                SWP_NOACTIVATE | SWP_NOREDRAW);
-            w->animX = static_cast<float>(p.ptWidgetClient.x);
-            w->hasAnimX = true;
         }
+        w->lastPlacement = p;
 
         if (!prevVis || changedSizeOrDpiOrY || forceRender || resumedFromFullscreen) {
             w->visible = true;
@@ -261,28 +262,25 @@ LRESULT CALLBACK WidgetWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
             if (!w) return 0;
             if (w->draggingOffset) {
                 POINT pt{};
-                GetCursorPos(&pt);
+                if (!GetCursorPos(&pt)) return 0;
                 float scale = static_cast<float>(w->lastPlacement.dpi ? w->lastPlacement.dpi : 96) / 96.0f;
+                // Keep the mouse-down origin while snapping to a free gap so
+                // small moves can accumulate across occupied taskbar space.
                 int deltaDip = static_cast<int>(std::lround(static_cast<float>(pt.x - w->dragStartScreen.x) / scale));
                 int desiredOffset = w->dragStartOffsetDip + deltaDip;
-                SetMonitorOffsetDip(app->cfg, w->isPrimary, w->deviceName, desiredOffset);
 
                 TaskbarPlacement p = app->host.ComputePlacementForTaskbar(
                     w->dragTaskbar, w->dragDim.widthDip, w->dragDim.heightDip, desiredOffset, w->dragOwnWindows);
                 if (p.valid && p.shouldShow) {
                     if (p.ptWidgetClient.x != w->lastPlacement.ptWidgetClient.x ||
                         p.ptWidgetClient.y != w->lastPlacement.ptWidgetClient.y) {
-                        SetWindowPos(w->hwnd, nullptr, p.ptWidgetClient.x, p.ptWidgetClient.y, 0, 0,
-                            SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOREDRAW);
+                        if (!SetWindowPos(w->hwnd, nullptr, p.ptWidgetClient.x, p.ptWidgetClient.y, 0, 0,
+                            SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOREDRAW)) return 0;
                     }
                     w->lastPlacement = p;
                     w->animX = static_cast<float>(p.ptWidgetClient.x);
                     w->hasAnimX = true;
-                    if (desiredOffset != p.appliedOffsetXDip) {
-                        SetMonitorOffsetDip(app->cfg, w->isPrimary, w->deviceName, p.appliedOffsetXDip);
-                        w->dragStartOffsetDip = p.appliedOffsetXDip;
-                        w->dragStartScreen = pt;
-                    }
+                    SetMonitorOffsetDip(app->cfg, w->isPrimary, w->deviceName, p.appliedOffsetXDip);
                 }
                 return 0;
             }
@@ -315,8 +313,8 @@ LRESULT CALLBACK WidgetWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
             if (!w) return 0;
             if (app->menuVisible) CloseMenu(app, false, true);
             if (GetKeyState(VK_MENU) < 0) {
+                if (!GetCursorPos(&w->dragStartScreen)) return 0;
                 w->draggingOffset = true;
-                GetCursorPos(&w->dragStartScreen);
                 w->dragStartOffsetDip = w->lastPlacement.appliedOffsetXDip;
                 w->dragDim = app->renderer.MeasureWidget(app->cfg);
                 w->dragOwnWindows = CollectOwnWindows(app);

@@ -50,8 +50,7 @@ void DrawSegmentedMeter(
     const D2D1_COLOR_F& trackCol,
     const D2D1_COLOR_F& fillCol,
     ID2D1SolidColorBrush* brush,
-    float gap,
-    bool forceFirstLit) {
+    float gap) {
     if (!rt || !brush || segments <= 0 || w <= 4.0f) return;
     const float segW = (w - gap * static_cast<float>(segments - 1)) / static_cast<float>(segments);
     if (segW <= 0.8f) return;
@@ -63,7 +62,7 @@ void DrawSegmentedMeter(
         D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(D2D1::RectF(sx, y, sx + segW, y + h), rad, rad);
 
         float frac = std::clamp(exactLit - static_cast<float>(i), 0.0f, 1.0f);
-        if (i == 0 && (forceFirstLit || pct > 0.1) && frac < 1.0f) frac = 1.0f;
+        if (i == 0 && pct > 0.1) frac = 1.0f;
 
         if (frac >= 0.99f) {
             brush->SetColor(fillCol);
